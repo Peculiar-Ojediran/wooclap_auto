@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local replay of observed Wooclap participant structure</title>
+  <style>
+    body { margin: 0; padding: 28px; font: 16px system-ui, sans-serif; color: #243047; background: #f4f6fb; }
+    header { margin: 0 auto 20px; max-width: 620px; font-size: 13px; color: #59657a; }
+    .MCQ { max-width: 620px; margin: auto; background: white; border-radius: 18px; padding: 24px; }
+    h1 { margin: 0 0 24px; font-size: 25px; }
+    ul { list-style: none; padding: 0; margin: 18px 0; }
+    li { margin: 10px 0; }
+    button[role], div[data-idx][aria-disabled] { box-sizing: border-box; width: 100%; padding: 14px 18px; border-radius: 10px; background: white; border: 1px solid #cbd4e5; color: #243047; text-align: left; font: inherit; }
+    button[aria-checked="true"] { border-color: #385bcc; background: #edf1ff; }
+    button[role] { cursor: pointer; }
+    [data-test-id="Participant.Submit"] { border: 0; border-radius: 10px; background: #385bcc; color: white; padding: 13px 24px; font: inherit; cursor: pointer; }
+    [data-test-id="Participant.Submit"]:disabled { opacity: .45; }
+    [data-test-id="participant-feedback-banner"] { padding: 18px; background: #e7edff; border-radius: 10px; }
+    .question-image { width: 180px; height: 130px; object-fit: contain; display: block; margin: 0 auto 16px; }
+    .choice-image { display: inline-block; width: 32px; height: 26px; object-fit: contain; margin-right: 12px; vertical-align: middle; }
+    .fa { display: inline-block; margin-right: 10px; }
+  </style>
+</head>
+<body>
+  <header>Network-isolated synthetic fixture · based on publicly served component structure · <span id="fixture-timer">0</span></header>
+  <main role="main" id="fixture-mount"></main>
+  <script>
+    (() => {
+    // This script is a local test harness, not code extracted from a live event.
+    const mount = document.getElementById('fixture-mount');
+    const triangle = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="130"><rect width="180" height="130" fill="#eef4ff"/><path d="M90 12 164 115H16Z" fill="#3b65c9"/></svg>');
+    let count = 0;
+    let generation = 0;
+    let currentKind = 'single';
+    let selectionDelay = 35;
+    let submitted = [];
+    function controls() { return [...mount.querySelectorAll('button[role="radio"], button[role="checkbox"]')]; }
+    function close() {
+      generation += 1;
+      for (const button of controls()) {
+        const div = document.createElement('div');
+        div.setAttribute('data-idx', button.getAttribute('data-idx'));
+        div.setAttribute('aria-disabled', 'true');
+        div.innerHTML = button.innerHTML;
+        button.replaceWith(div);
+      }
+      mount.querySelector('nav')?.remove();
+    }
+    function feedback(icon, text) {
+      mount.querySelector('[role="alert"]')?.remove();
+      const alert = document.createElement('div');
+      alert.setAttribute('role', 'alert');
+      const banner = document.createElement('div');
+      banner.setAttribute('data-test-id', 'participant-feedback-banner');
+      const marker = document.createElement('i');
+      marker.className = 'fa fa-' + icon;
+      marker.setAttribute('aria-hidden', 'true');
+      marker.setAttribute('role', 'img');
+      marker.textContent = icon === 'hourglass-start' ? '…' : '✓';
+      const message = document.createElement('span');
+      message.textContent = text;
+      banner.append(marker, message);
+      alert.append(banner);
+      mount.querySelector('ul').before(alert);
+    }
+    function showSorting() {
+      generation += 1;
+      const version = generation;
+      mount.innerHTML = '<div class="Sorting"><h1 id="question-title" data-test-id="Question.participant.title">Sort the numbers from smallest to largest.</h1><ul data-rbd-droppable-id="sorting"></ul><nav><button data-test-id="Participant.Submit">Send</button></nav></div>';
+      const list = mount.querySelector('ul');
+      function refresh() {
+        [...list.children].forEach((row, index) => {
+          row.querySelector('.fa-arrow-up').parentElement.setAttribute('aria-hidden', String(index === 0));
+          row.querySelector('.fa-arrow-down').parentElement.setAttribute('aria-hidden', String(index === list.children.length - 1));
+        });
+      }
+      for (const value of ['30', '20', '10']) {
+        const row = document.createElement('li'); row.setAttribute('data-rbd-draggable-id', 'sort-' + value);
+        const label = document.createElement('span'); label.id = 'choice-text-sort-' + value; label.textContent = value; row.append(label);
+        for (const direction of ['up', 'down']) {
+          const button = document.createElement('button'); button.setAttribute('aria-controls', label.id);
+          button.innerHTML = '<i class="fa-arrow-' + direction + '"></i>';
+          button.addEventListener('click', () => setTimeout(() => {
+            if (version !== generation || !row.isConnected) return;
+            if (direction === 'up' && row.previousElementSibling) list.insertBefore(row, row.previousElementSibling);
+            if (direction === 'down' && row.nextElementSibling) list.insertBefore(row.nextElementSibling, row);
+            refresh();
+          }, Math.max(250, selectionDelay)));
+          row.append(button);
+        }
+        list.append(row);
+      }
+      refresh();
+      mount.querySelector('[data-test-id="Participant.Submit"]').onclick = () => {
+        submitted = [...list.children].map(row => row.getAttribute('data-rbd-draggable-id'));
+        count += 1; mount.querySelector('nav').remove(); feedback('paper-plane', 'Your answer has been submitted');
+      };
+    }
+    function show(kind = 'single') {
+      if (kind === 'sorting') { showSorting(); return; }
+      generation += 1;
+      const thisGeneration = generation;
+      currentKind = kind;
+      const multiple = kind === 'multiple';
+      const text = multiple ? 'Which of these numbers are prime? Select all that apply.' : kind === 'image' ? 'How many sides does the shape shown have?' : 'What is 6 × 7?';
+      const options = multiple ? ['2', '4', '5', '9'] : kind === 'image' ? ['3', '4', '5'] : ['36', '42', '48'];
+      const scope = document.createElement('div');
+      scope.className = 'MCQ';
+      const titleWrapper = document.createElement('div');
+      if (kind === 'image') {
+        const image = document.createElement('img'); image.src = triangle; image.alt = ''; image.className = 'question-image'; titleWrapper.append(image);
+      }
+      const heading = document.createElement('h1');
+      heading.id = 'question-title'; heading.setAttribute('data-test-id', 'Question.participant.title'); heading.textContent = text;
+      titleWrapper.append(heading); scope.append(titleWrapper);
+      const body = document.createElement('div');
+      const group = document.createElement('ul');
+      group.setAttribute('aria-labelledby', 'question-title'); group.setAttribute('role', multiple ? 'group' : 'radiogroup');
+      options.forEach((text, index) => {
+        const item = document.createElement('li'); item.setAttribute('data-idx', String(index + 1));
+        const wrapper = document.createElement('div');
+        const control = document.createElement('button');
+        control.type = 'button'; control.setAttribute('data-idx', String(index + 1)); control.setAttribute('role', multiple ? 'checkbox' : 'radio');
+        control.setAttribute('aria-checked', 'false'); control.setAttribute('aria-disabled', 'false');
+        if (kind === 'image' && index === 0) {
+          const image = document.createElement('img'); image.src = triangle; image.alt = ''; image.setAttribute('aria-hidden', 'true'); image.className = 'choice-image'; control.append(image);
+        }
+        const label = document.createElement('span'); label.textContent = text; control.append(label);
+        control.addEventListener('click', () => {
+          const desired = control.getAttribute('aria-checked') !== 'true';
+          setTimeout(() => {
+            if (generation !== thisGeneration || !control.isConnected) return;
+            if (!multiple && desired) for (const other of controls()) other.setAttribute('aria-checked', 'false');
+            control.setAttribute('aria-checked', String(desired));
+            scope.querySelector('[data-test-id="Participant.Submit"]').disabled = !controls().some(choice => choice.getAttribute('aria-checked') === 'true');
+          }, selectionDelay);
+        });
+        wrapper.append(control); item.append(wrapper); group.append(item);
+      });
+      body.append(group); scope.append(body);
+      const nav = document.createElement('nav'); nav.setAttribute('role', 'navigation'); nav.setAttribute('aria-label', 'Question');
+      const submit = document.createElement('button'); submit.type = 'button'; submit.disabled = true; submit.textContent = 'Send'; submit.setAttribute('data-test-id', 'Participant.Submit');
+      submit.addEventListener('click', () => {
+        const selected = controls().filter(choice => choice.getAttribute('aria-checked') === 'true').map(choice => 'choice-' + choice.getAttribute('data-idx'));
+        if (!selected.length) return;
+        count += 1; submitted = selected; close(); feedback('paper-plane', 'Your answer has been submitted');
+      });
+      nav.append(submit); scope.append(nav); mount.replaceChildren(scope);
+    }
+    window.fixture = {
+      show, close,
+      waiting() { generation += 1; mount.innerHTML = '<p>Waiting for the presenter to start a question.</p>'; },
+      miss() { close(); feedback('hourglass-start', 'You did not answer'); },
+      feedback,
+      get submissionCount() { return count; },
+      get submittedIds() { return [...submitted]; },
+      get selectedIds() { return controls().filter(choice => choice.getAttribute('aria-checked') === 'true').map(choice => 'choice-' + choice.getAttribute('data-idx')); },
+      get kind() { return currentKind; },
+      set selectionDelay(value) { selectionDelay = value; }
+    };
+    show('single');
+    let tick = 0; setInterval(() => { document.getElementById('fixture-timer').textContent = String(++tick); }, 1000);
+    })();
+  </script>
+</body>
+</html>

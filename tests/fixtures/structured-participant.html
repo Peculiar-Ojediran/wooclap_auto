@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Offline structured participant fixture</title>
+<style>
+body { background:#eef2f5; color:#193047; font-family:system-ui,sans-serif; margin:0; padding:36px; }
+main { max-width:740px; margin:auto; background:white; border-radius:18px; padding:30px; }
+h1 { font-size:25px; } input,textarea,select,button { font:inherit; padding:10px; border:1px solid #7b8ca0; border-radius:6px; }
+textarea { display:block; width:90%; min-height:80px; } input { max-width:150px; }
+nav { margin-top:26px; } nav button { background:#116970; color:white; } button:disabled { opacity:.5; }
+.sentence p,.sentence>span { display:inline; } .dropdown { display:inline-block; position:relative; }
+[role=listbox] { position:absolute; top:100%; left:0; z-index:2; background:white; border:1px solid #64748b; min-width:150px; }
+[role=option] { display:block; cursor:pointer; padding:8px; } [role=option]:hover { background:#e4f4f2; }
+.match { display:flex; justify-content:space-between; margin:16px 0; } [role=alert] { padding:12px; background:#ddf4e4; margin-top:18px; }
+</style></head><body><main id="mount"></main>
+<script>
+// Synthetic DOM reproduction of public participant component structure, no real event traffic.
+(() => {
+  let type = 'numeric', delay = 35, submissions = 0, updates = 0, lastSubmitted = {}, state = {}, controls = new Map();
+  let menuChoices = ['France', 'Germany', 'Spain'];
+  const mount = document.getElementById('mount');
+  const scalarTypes = new Set(['numeric', 'text', 'wordcloud']);
+  const titles = { numeric:'What is 12.5 multiplied by 2?', text:'What is the capital of France?', wordcloud:'Name one renewable energy source.',
+    blanks:'Complete both blanks.', 'closed-blanks':'Complete both blanks.', matching:'Match each country to its capital.' };
+  const classes = {numeric:'GuessNumber',text:'OpenQuestion',wordcloud:'WordCloud',blanks:'FillInTheBlanks','closed-blanks':'FillInTheBlanks',matching:'Matching'};
+  function updateSubmit() {
+    const ready = Object.values(state).every(value => value && value !== 'none');
+    mount.querySelector('[data-test-id="Participant.Submit"]').disabled = !ready;
+  }
+  function setValue(control, value) { control.value = value; }
+  function watch(control, id, isSelect = false) {
+    controls.set(id, control);
+    const prototype = isSelect ? HTMLSelectElement.prototype : control.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    let tracked = descriptor.get.call(control);
+    // React tracks text inputs, while native selects use their change event.
+    if (!isSelect) Object.defineProperty(control, 'value', { configurable:true, get() { return descriptor.get.call(this); }, set(value) { tracked=String(value); descriptor.set.call(this,value); } });
+    state[id] = tracked;
+    control.addEventListener(isSelect ? 'change' : 'input', () => {
+      const value = descriptor.get.call(control);
+      if (!isSelect && tracked === value) return;
+      tracked = value;
+      descriptor.set.call(control, state[id]); // Render old controlled state until async change commits.
+      setTimeout(() => {
+        if (!control.isConnected) return;
+        if (isSelect && value !== 'none') {
+          for (const [otherId, otherControl] of controls) if (otherId !== id && state[otherId] === value) {
+            state[otherId] = 'none'; setValue(otherControl, 'none');
+          }
+        }
+        state[id] = value;
+        setValue(control, value);
+        updates += 1;
+        if (isSelect) for (const [sourceId, select] of controls) for (const option of select.options) {
+          const base = option.textContent.replace(/^\u2713\s*/, '');
+          option.textContent = option.value !== 'none' && Object.entries(state).some(([key,val]) => key !== sourceId && val === option.value) ? '\u2713 ' + base : base;
+        }
+        // A controlled React select reapplies the value after reconciling its options.
+        if (isSelect) for (const [sourceId, select] of controls) setValue(select, state[sourceId]);
+        updateSubmit();
+      }, delay);
+    });
+  }
+  function dropdown(container, id) {
+    const wrapper = document.createElement('span'); wrapper.className='dropdown';
+    const button = document.createElement('button'); button.type='button'; button.setAttribute('role','combobox');
+    button.setAttribute('aria-haspopup','listbox'); button.setAttribute('aria-controls','dropdown-listbox');
+    button.setAttribute('aria-label','Select a choice'); button.setAttribute('aria-expanded','false');
+    button.textContent='Select a choice'; wrapper.append(button); container.append(wrapper); controls.set(id,button); state[id]='';
+    function shut() { button.setAttribute('aria-expanded','false'); wrapper.querySelector('[role=listbox]')?.remove(); }
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-expanded') === 'true') return shut();
+      button.setAttribute('aria-expanded','true');
+      const menu=document.createElement('div'); menu.id='dropdown-listbox'; menu.setAttribute('role','listbox');
+      menuChoices.forEach((text,index) => {
+        const option=document.createElement('div'); option.id='dropdown-option-'+index; option.setAttribute('role','option'); option.textContent=text;
+        option.addEventListener('click', () => { shut(); setTimeout(() => { if (!button.isConnected) return; state[id]=text; button.textContent=text; updates+=1; updateSubmit(); },delay); });
+        menu.append(option);
+      });
+      wrapper.append(menu);
+    });
+  }
+  function show(nextType) {
+    if (!(nextType in classes)) throw new Error('Unknown fixture type');
+    type=nextType; state={}; controls=new Map(); menuChoices=['France','Germany','Spain'];
+    mount.className=classes[type];
+    mount.innerHTML='<h1 id="question-title" data-test-id="Question.participant.title"></h1><section id="answer-body"></section><nav><button type="button" data-test-id="Participant.Submit" disabled>Submit</button></nav>';
+    mount.querySelector('h1').textContent=titles[type];
+    const body=mount.querySelector('#answer-body');
+    if (type==='numeric') {
+      body.innerHTML='<div><button type="button" aria-label="Decrease">−</button><input type="text" aria-live="polite" aria-atomic="true"><button type="button" aria-label="Increase">+</button></div><div><p>Enter a number between 0 and 100.</p><p>Use a dot for decimals.</p></div>';
+      watch(body.querySelector('input'),'answer');
+    } else if (type==='text'||type==='wordcloud') {
+      body.innerHTML='<div><textarea id="send-message-textarea" data-test-id="TextareaAnswerQuestion" aria-label="Your answer"></textarea></div><p><small>You can send several answers.</small></p>';
+      watch(body.querySelector('textarea'),'answer');
+    } else if (type==='blanks'||type==='closed-blanks') {
+      body.className='sentence';
+      const start=document.createElement('p');start.textContent='Paris is the capital of ';body.append(start);
+      if (type==='closed-blanks') dropdown(body,'blank-1');
+      else {const span=document.createElement('span');span.innerHTML='<input type="text" aria-label="Fill in the blank">';body.append(span);watch(span.firstChild,'blank-1');}
+      const middle=document.createElement('p');middle.textContent='. Two plus two is ';body.append(middle);
+      const span=document.createElement('span');span.innerHTML='<input type="text" aria-label="Fill in the blank">';body.append(span);watch(span.firstChild,'blank-2');
+      const end=document.createElement('p');end.textContent='.';body.append(end);
+    } else if (type==='matching') {
+      for(const [id,text] of [['france','France'],['germany','Germany']]) {
+        const row=document.createElement('div');row.className='match';
+        const label=document.createElement('div');label.id='choice-text-'+id;label.textContent=text;row.append(label);
+        const select=document.createElement('select');select.name='answer';select.setAttribute('aria-labelledby',label.id);
+        for(const [value,text] of [['none','Select a choice'],['paris','A. Paris'],['berlin','B. Berlin']]) {const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+        row.append(select);body.append(row);watch(select,id,true);
+      }
+    }
+    mount.querySelector('[data-test-id="Participant.Submit"]').addEventListener('click', () => {
+      if (Object.values(state).some(value=>!value||value==='none')) return;
+      submissions += 1;lastSubmitted={...state};
+      const feedback=document.createElement('div');feedback.setAttribute('role','alert');feedback.innerHTML='<div data-test-id="participant-feedback-banner"><i class="fa-paper-plane"></i>Answer received.</div>';body.append(feedback);
+      if (type==='text'||type==='wordcloud') {state.answer='';setValue(controls.get('answer'),'');updateSubmit();}
+      else {for(const control of controls.values()) control.disabled=true;mount.querySelector('[data-test-id="Participant.Submit"]').disabled=true;}
+    });
+  }
+  window.fixture={show,get submissionCount(){return submissions;},get submittedValues(){return {...lastSubmitted};},get values(){return {...state};},get updateCount(){return updates;},get type(){return type;},
+    get inputDelay(){return delay;},set inputDelay(value){delay=value;},setDropdownOptions(values){menuChoices=[...values];},
+    clearFeedback(){mount.querySelector('[role=alert]')?.remove();},
+    close(){for(const control of controls.values())control.disabled=true;mount.querySelector('[data-test-id="Participant.Submit"]').remove();}
+  };
+  show('numeric');
+})();
+</script></body></html>

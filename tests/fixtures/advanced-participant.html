@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Advanced participant controls practice</title>
+<style>
+body{font-family:system-ui;margin:30px;background:#eef2f8;color:#172143}main{background:white;border-radius:18px;padding:24px;max-width:760px;margin:auto}h1{font-size:24px}button,input,textarea{font:inherit;padding:10px}button{cursor:pointer}li{list-style:none;margin:18px 0}ul{padding:0}[role=slider]{outline:1px solid #bbb;padding:12px}[role=slider] ul{display:flex;justify-content:space-between;margin:0}[role=slider] li{display:inline-block;margin:0}.image{position:relative;width:400px;height:200px}.image img{width:400px;height:200px}.pin{position:absolute;top:60px;left:90px;border-radius:50%;background:#ddd}.pin.second{left:270px;top:115px}[data-test-id="Participant.Submit"]{background:#126a64;color:white;border:0;border-radius:8px}.item{display:flex;align-items:center;gap:15px}h6{font-size:16px;margin:10px}textarea{display:block;width:90%;margin:20px 0}
+</style></head><body><main id="question"></main>
+<script>
+(() => {
+  const root=document.querySelector('#question');
+  const asset='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#d9eee8"/><circle cx="110" cy="80" r="45" fill="#145f5a"/><rect x="255" y="105" width="80" height="55" fill="#df8348"/></svg>');
+  const image=()=>'<div class="image"><img aria-hidden="true" alt="A circle on the left and a rectangle on the right" src="'+asset+'"></div>';
+  const submit='<button data-test-id="Participant.Submit" disabled>Submit</button>';
+  let count=0,delay=35,kind='Rating',timer;
+  function slider(id,min,max,values){return '<div role="slider" tabindex="0" '+(id?'aria-labelledby="choice-text-'+id+'" ':'aria-label="Impact" ')+'aria-valuemin="'+min+'" aria-valuemax="'+max+'" aria-valuenow="'+min+'" step="1"><div><span></span><ul>'+values.map(v=>'<li><span><p>'+v+'</p></span></li>').join('')+'</ul></div></div>'}
+  function show(type){
+    clearTimeout(timer);kind=type;root.className=type;
+    let title='',body='';
+    if(type==='Rating'){
+      title='Rate the specified fictional observations: item one is 2/5; item two is 4/5.';
+      body='<ul><li><div id="choice-text-quality">First observation</div>'+slider('quality',1,5,[1,2,3,4,5])+'</li><li><div id="choice-text-speed">Second observation</div>'+slider('speed',1,5,[1,2,3,4,5])+'</li></ul>'+submit;
+    }else if(type==='Prioritization'){
+      title='Allocate 100 points: 60 to safety and 40 to speed.';
+      body='<div><div><span>Allocate 100 points</span><span id="remaining">100 points left</span></div><ul><li><div id="choice-text-safety">Safety</div><input type="number" id="choice-safety"></li><li><div id="choice-text-speed">Speed</div><input type="number" id="choice-speed"></li></ul></div>'+submit;
+    }else if(type==='Brainstorm'){
+      title='Name one way to reduce unnecessary meetings.';
+      body='<h2>Choose a category</h2><button aria-haspopup="listbox">Communication</button><div><div><textarea aria-label="Write your thoughts"></textarea></div><div><span id="characters-left">180 characters left</span><button aria-label="Validate"><i class="fa fa-paper-plane"></i>Send</button></div></div><div id="board"></div>';
+    }else if(type==='Framework'){
+      title='Suggest one improvement for the illustrated plan.';
+      body=image()+'<div><h3 id="category-0">Circle ideas</h3><button aria-label="Add answer for Circle ideas">1</button><h3 id="category-1">Rectangle ideas</h3><button aria-label="Add answer for Rectangle ideas">2</button></div><label for="framework-answer-input">Circle ideas</label><input id="framework-answer-input" maxlength="180"><div id="board"></div>';
+    }else if(type==='LabelAnImage'){
+      title='Name the shapes at each numbered marker.';
+      body=image()+'<label>Selected caption<input></label>'+submit;
+    }else if(type==='ShowOnImage'){
+      title='Locate the center of the circle.';body=image()+submit;
+    }else if(type==='DragAndDrop'){
+      title='Place each name on its matching shape.';
+      body=image()+'<div class="item"><div>1</div><h6>Circle</h6></div><div class="item"><div>2</div><h6>Rectangle</h6></div>'+submit;
+    }else if(type==='Concordance'||type==='SCTJudgment'){
+      title='Evaluate the proposed hypothesis after receiving the additional information.';
+      const values=type==='Concordance'?[-2,-1,0,1,2]:[-2,-1,1,2];
+      body='<ul><li><div><div><span>Context</span><div>A sealed box is expected to contain a red ball.</div></div><div><span>Additional information</span><div>A reliable scan shows a blue ball.</div></div></div></li><span>Impact</span><p id="selected-scale">Selected scale label</p>'+slider('',-2,2,type==='Concordance'?values:values.map(()=>''))+'</ul><p>Explain your reasoning</p><textarea aria-label="Expert comment"></textarea>'+submit;
+    }else throw Error('Unknown fixture type '+type);
+    root.innerHTML='<h1 id="question-title" data-test-id="Question.participant.title">'+title+'</h1>'+body;
+    if(type==='LabelAnImage') root.querySelector('.image').insertAdjacentHTML('beforeend','<button class="pin" aria-label="Marker 1 to identify">1</button><button class="pin second" aria-label="Marker 2 to identify">2</button>');
+    root.querySelectorAll('[role=slider]').forEach(control=>control.addEventListener('keydown',event=>{
+      if(!['Home','ArrowRight','End'].includes(event.key))return;
+      event.preventDefault();const min=Number(control.getAttribute('aria-valuemin')),max=Number(control.getAttribute('aria-valuemax'));
+      const value=event.key==='Home'?min:event.key==='End'?max:Math.min(max,Number(control.getAttribute('aria-valuenow'))+1);
+      setTimeout(()=>{if(!control.isConnected)return;control.setAttribute('aria-valuenow',String(value));control.querySelector('span').setAttribute('data-score',String(value));update();},delay);
+    }));
+    root.querySelectorAll('input[type=number]').forEach(input=>input.addEventListener('input',()=>setTimeout(()=>{
+      if(!input.isConnected)return;input.value=String(Math.max(0,Math.abs(parseInt(input.value)||0)))==='0'?'':String(Math.abs(parseInt(input.value)||0));update();
+    },delay)));
+    root.querySelector('[data-test-id="Participant.Submit"]')?.addEventListener('click',()=>{
+      count++;root.querySelector('[data-test-id="Participant.Submit"]').remove();root.insertAdjacentHTML('beforeend','<div role="alert"><div data-test-id="participant-feedback-banner"><i class="fa fa-paper-plane"></i>Answer received</div></div>');
+    });
+  }
+  function fields(){
+    if(kind==='Rating')return [...root.querySelectorAll('[role=slider]')].map(s=>[s.getAttribute('aria-labelledby').slice(12),s.querySelector('[data-score]')?.getAttribute('data-score')??'']);
+    return [...root.querySelectorAll('input[type=number]')].map(i=>[i.id.slice(7),i.value||'0']);
+  }
+  function update(){const button=root.querySelector('[data-test-id="Participant.Submit"]');if(!button)return;
+    if(kind==='Rating')button.disabled=fields().some(([,value])=>!value);
+    if(kind==='Prioritization'){const total=fields().reduce((sum,[,value])=>sum+Number(value),0);root.querySelector('#remaining').textContent=(100-total)+' points left';button.disabled=total!==100;}}
+  window.advancedFixture={show,fields,get submissionCount(){return count},get delay(){return delay},set delay(value){delay=value},closeQuestion(){root.querySelector('[data-test-id="Participant.Submit"]')?.remove()}};
+  show('Rating');
+})();
+</script></body></html>
