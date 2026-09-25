@@ -57,7 +57,7 @@ function disabled(element: HTMLElement): boolean {
 function typeOf(scope: Element): string | undefined {
   return ADVANCED_TYPES.split(', ').map(s => s.slice(1)).find(type => scope.classList.contains(type));
 }
-function pinDecoration(svg: Element): boolean {
+export function pinDecoration(svg: Element): boolean {
   if (!svg.closest('.LabelAnImage') || svg.getAttribute('viewBox') !== '0 0 160 160') return false;
   const sibling = svg.parentElement?.querySelector(':scope > button[aria-label]');
   if (!sibling || !/^[1-9]\d*$/.test(compact(sibling.textContent)) || ![1, 2].includes(svg.children.length)) return false;

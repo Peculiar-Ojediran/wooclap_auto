@@ -3,6 +3,7 @@ import { fingerprint, validateAnswer } from '../shared/core.js';
 import { eventKeyForUrl, extractWooclap, hasWooclapConfirmation } from './wooclap.js';
 import { applyStructured, verifyStructured, structuredResponseSnapshot } from './structured.js';
 import { applyAdvanced, verifyAdvanced, advancedResponseSnapshot } from './advanced.js';
+import { isRemaining, snapshotRemaining, applyRemaining, verifyRemaining, submitRemaining, hasContributionsConfirmation } from './remaining.js';
 export { eventKeyForUrl } from './wooclap.js';
 
 type Extracted = { question: Question; scope: Element; controls: Map<string, HTMLElement>; rect: CaptureRect };
@@ -208,7 +209,8 @@ export function observePage(config: SelectorConfig, doc: Document = document): O
     const result = extract(config, doc);
     if ('state' in result) return result;
     return { question: result.question, state: 'question', detail: 'A supported question is ready.', rect: result.rect,
-      ...(structuredKind(result.question) ? { inputSignature: structuredResponseSnapshot(result) }
+      ...(isRemaining(result.question) ? { inputSignature: snapshotRemaining(result) }
+        : structuredKind(result.question) ? { inputSignature: structuredResponseSnapshot(result) }
         : advancedKind(result.question) ? { inputSignature: advancedResponseSnapshot(result) } : {}) };
   } catch (error) {
     return { question: null, state: 'unsupported', detail: `Could not read question: ${error instanceof Error ? error.message : 'invalid page or selectors'}` };
@@ -275,7 +277,8 @@ export async function selectAnswer(question: Question, answer: Answer, config: S
     const issue = validateAnswer(question, answer);
     if (issue) throw new Error(issue);
     const read = () => currentQuestion(question, config, doc);
-    if (structuredKind(question)) await applyStructured(question, answer, read, assertActive);
+    if (isRemaining(question)) await applyRemaining(question, answer, read, assertActive);
+    else if (structuredKind(question)) await applyStructured(question, answer, read, assertActive);
     else await applyAdvanced(question, answer, read, assertActive);
     lastSelection.set(doc, { question, answer: structuredClone(answer) });
     return { submittedBySelection: false };
@@ -314,11 +317,13 @@ export async function selectAnswer(question: Question, answer: Answer, config: S
   return { submittedBySelection: false };
 }
 
-export async function submitAnswer(config: SelectorConfig, doc: Document = document): Promise<void> {
+export async function submitAnswer(config: SelectorConfig, doc: Document = document, assertActive: () => void = () => {}): Promise<void> {
+  assertActive();
   const expected = lastSelection.get(doc);
   if (!expected) throw new Error('Select and verify an answer before submitting.');
   const current = currentQuestion(expected.question, config, doc);
-  const valid = structuredKind(expected.question) ? verifyStructured(current, expected.answer)
+  const valid = isRemaining(expected.question) ? verifyRemaining(current, expected.answer)
+    : structuredKind(expected.question) ? verifyStructured(current, expected.answer)
     : advancedKind(expected.question) ? verifyAdvanced(current, expected.answer)
     : expected.question.kind === 'sorting' ? JSON.stringify([...current.controls.keys()]) === JSON.stringify(expected.answer.selectedChoiceIds)
     : [...current.controls].every(([id, control]) => selected(control) === expected.answer.selectedChoiceIds.includes(id));
@@ -326,17 +331,24 @@ export async function submitAnswer(config: SelectorConfig, doc: Document = docum
     lastSelection.delete(doc);
     throw new Error('The selected choices changed before submission. Review the answer before continuing.');
   }
+  if (isRemaining(expected.question) && ['Brainstorm', 'Framework'].includes(expected.question.wooclapType ?? '')) {
+    lastSelection.delete(doc);
+    await submitRemaining(current, expected.answer, assertActive);
+    return;
+  }
   const matches = config.submit ? query(doc, config.submit)
     : query(current.scope, '[data-wooclap-submit], [data-test-id="Participant.Submit"], button[type="submit"], input[type="submit"], button')
       .filter(element => element.matches('[data-wooclap-submit], [data-test-id="Participant.Submit"], [type="submit"]') || /^(submit|send|vote|validate)(?:\s+answer)?$/i.test(accessibleLabel(element)));
   const buttons = [...new Set(matches)].filter(element => !disabled(element as HTMLElement));
   if (buttons.length !== 1) throw new Error('A unique enabled submit control was not found. Configure its selector or submit manually.');
   lastSelection.delete(doc);
+  assertActive();
   (buttons[0] as HTMLElement).click();
   await Promise.resolve();
 }
 
 export function hasSubmissionConfirmation(config: SelectorConfig, doc: Document = document): boolean {
+  if (sourceForUrl(doc.URL) === 'wooclap' && hasContributionsConfirmation(doc)) return true;
   if (sourceForUrl(doc.URL) === 'wooclap' && hasWooclapConfirmation(doc)) return true;
   const explicit = config.confirmation || '[data-wooclap-confirmation]';
   if (query(doc, explicit).length === 1) return true;

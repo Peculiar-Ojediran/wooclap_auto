@@ -2,14 +2,14 @@
 
 ## Goal
 
-The [question-type roadmap](docs/QUESTION_TYPES_ROADMAP.md) now records implementation status for every tile in the supplied screenshot. Sorting's media and required-comment findings are repaired. Seven additional types support guarded application and submission; seven provide answer previews for manual application. Live acceptance for these new types remains unverified. [Verification results](docs/VERIFICATION.md) record the current executed checks separately from implementation status.
+The [question-type roadmap](docs/QUESTION_TYPES_ROADMAP.md) now records implementation status for every tile in the supplied screenshot. Sorting's media and required-comment findings are repaired. All 14 additional answer types support guarded application and submission for recognized layouts. The [remaining-types plan](docs/REMAINING_TYPES_PLAN.md) records the final seven implementations and their constraints. Live acceptance for these new types remains unverified. [Verification results](docs/VERIFICATION.md) record the current executed checks separately from implementation status.
 
 Build an Edge extension that recognizes a Wooclap participant page, detects a new question, asks an AI for an answer, and selects/submits the answer. Users join events manually. Support a suggestion mode while validating the integration and an automatic mode for supported question layouts.
 
 ## Architecture
 
 - Microsoft Edge Manifest V3 extension, written in TypeScript.
-- Content adapters read visible question content and controls from the DOM. `wooclap.ts` handles choices/sorting and dispatches to `structured.ts` for text/fields and `advanced.ts` for scales, categories, and image questions. Observe changes and run a five-second backup check; debounce changes while content loads.
+- Content adapters read visible question content and controls from the DOM. `wooclap.ts` handles choices/sorting and dispatches to `structured.ts` for text/fields, `remaining.ts` for contribution/image/scenario modules, and `advanced.ts` for rating/allocation and preview fallbacks. Observe changes and run a five-second backup check; debounce changes while content loads.
 - An extension service worker owns the session, validates the tab and answers, and calls a local Node.js bridge.
 - The bridge uses the OpenAI Responses API with a strict output schema selected for the answer family, then validates it against the question. The API key stays in a local environment file outside the extension. Bridge protocol 2 preserves legacy unversioned request support and clearly rejects incompatible explicit versions.
 - When a question contains images, capture only its visible region. Pause if needed content is offscreen or if the monitored tab is inactive.
@@ -30,7 +30,7 @@ Build an Edge extension that recognizes a Wooclap participant page, detects a ne
 
 - Existing: single/multiple-choice questions, true/false, Poll, and text Sorting.
 - New application/submission paths: Find a number, Open question, Word Cloud, Fill in the Blanks (text/custom dropdowns), Matching, Rating, and Prioritization.
-- New previews: Brainstorming (current category), Framework, Label an image, Find on image (one point), Drag and drop, Script concordance test, and SCT Judgment. These require manual application; incomplete custom scenario-scale meaning requires review.
+- Remaining automatic paths: Brainstorming, Framework, Label an image, Find on image (one point), Drag and drop, Script concordance test, and SCT Judgment. Each verifies retained values or positions before one submission. Unknown variants retain manual previews/review. SCT preparation reads every custom scale description through local draft selections; existing selections are restored, while an initially unanswered scale keeps an unsubmitted first-position draft.
 - Presentation activities are recognized as waiting/non-answer states. Organizer **Create using AI** needs no participant answer adapter.
 - Matching uses unique destinations for the inspected native dropdown controls. The shared contract can represent reusable targets when a future observed layout supports them.
 
@@ -52,7 +52,7 @@ After updating, rebuild, restart the bridge, reload the extension at `edge://ext
 4. Implement guarded selection, submission, cancellation, and status verification.
 5. Run type checks, unit/integration tests, and browser tests with the loaded extension.
 6. Validate a real participant event when a test URL/code is supplied; refine selectors as needed.
-7. The originally deferred text/numeric and additional question families are now implemented at the capability levels above. Stronger visual interaction and optional course materials remain future work.
+7. The originally deferred text/numeric and additional question families are now implemented at the capability levels above. Controlled live acceptance, additional layout variants, image overlays, and optional course materials remain future work.
 
 ## Acceptance checks
 
@@ -124,8 +124,8 @@ At sorting's initial delivery, 67 automated tests passed, including ordered-answ
 
 ## Expanded question-type implementation (2026-09-24)
 
-Implemented the contract foundation and capability matrix above: strict family-specific model outputs, shared answer validation, field/constraint fingerprints, one-contribution handling, participant-edit guards, family-specific popup previews, and protocol 2 compatibility checks. Model prompts require review when personal preferences or experiences were not supplied. Image geometry and contribution paths that lack verified automatic interaction remain previews.
+Implemented the contract foundation and capability matrix above: strict family-specific model outputs, shared answer validation, field/constraint fingerprints, one-contribution handling, participant-edit guards, family-specific popup previews, and protocol 2 compatibility checks. Model prompts require review when personal preferences or experiences were not supplied. The final seven implementations add category selection and own-contribution receipts, caption read-back, verified image placement, and complete custom SCT scale extraction. Unrecognized variants remain previews or review states.
 
 Deterministic commands include `npm run check`, existing Edge regressions, and `npm run test:types`. The separate `npm run test:openai:types` command makes at most three paid requests for numeric, matching, and image-point output schemas; it is never invoked by ordinary tests. See [verification results](docs/VERIFICATION.md) for the latest results and whether that optional paid check was run.
 
-Remaining work: verify the new application paths in a controlled live event; implement reliable category, caption, and image-placement interactions and receipts before promoting their previews; expose complete custom SCT scale meanings before allowing submission. Keep local replay, real API response checks, and actual live acceptance as separate evidence.
+Remaining validation: verify the new application paths in a controlled live event. Additional capabilities include multi-point responses, required SCT comment generation, image overlays, and unsupported geometry/layout variants. Keep local replay, real API response checks, and actual live acceptance as separate evidence.

@@ -1,0 +1,57 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Image participant replay</title>
+<style>
+body{margin:24px;font:16px system-ui;background:#eef2f8}main{max-width:680px;padding:20px;background:white}h1{font-size:22px}.image,.surface{position:relative;width:400px;height:200px}.surface{display:block;padding:0;border:0;background:transparent}.image img{display:block;width:400px;height:200px}.pin{position:absolute;width:40px;height:40px;transform:translate(-50%,-50%)}.pin>span,.pin>button:first-of-type{position:absolute;inset:0;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#cae7ef}.pin>span>span{position:static}.pin .delete{position:absolute;right:-8px;top:-8px;width:20px;height:20px;padding:0}.item{display:flex;gap:14px;margin:14px 0;border:2px solid transparent;cursor:pointer}.item.selected{border-color:#222}h6{font-size:16px;margin:0}input{padding:10px;font:inherit}button{font:inherit;padding:10px;cursor:pointer}#caption{margin:24px 0}#caption span{margin-right:15px}
+</style></head><body><main></main><script>
+(() => {
+  // Replays public component handler semantics; no private app state is exposed
+  // to the extension. Test-only state below is for independent assertions.
+  const main=document.querySelector('main');
+  const asset='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#d9eee8"/><circle cx="100" cy="60" r="35" fill="#165f59"/><rect x="265" y="110" width="70" height="60" fill="#de8842"/></svg>');
+  let type, selected=null, draft={}, captions={}, delay=35, count=0, generation=0, pendingMouse=null, timerSet=new Set(), ignoreInput=false;
+  const later=fn=>{const gen=generation;const timer=setTimeout(()=>{timerSet.delete(timer);if(gen===generation)fn()},delay);timerSet.add(timer)};
+  const image=()=>main.querySelector('img');
+  const imageHTML=()=>'<img draggable="false" aria-hidden="true" alt="A circle on the left and rectangle on the right" src="'+asset+'">';
+  function ready(){const submit=main.querySelector('[data-test-id="Participant.Submit"]');submit.disabled=type==='LabelAnImage'?!captions[1]||!captions[2]:type==='ShowOnImage'?!draft[1]:!draft[1]||!draft[2]}
+  function addPin(number,x,y,caption=false){
+    const wrapper=document.createElement('div');wrapper.className='pin';wrapper.style.left=x+'px';wrapper.style.top=y+'px';
+    if(caption){wrapper.innerHTML='<svg viewBox="0 0 160 160"><circle cx="80" cy="80" r="80" stroke-dasharray="565"></circle></svg><button aria-label="Marker '+number+' to identify"><span>'+number+'</span></button>';wrapper.addEventListener('click',()=>later(()=>{selected=number;renderCaption()}))}
+    else if(type==='ShowOnImage'){wrapper.innerHTML='<span><span>+</span></span><button class="delete"><i class="fa fa-times"></i></button>';wrapper.querySelector('button').onclick=()=>later(()=>{draft={};renderPins();ready()})}
+    else wrapper.innerHTML='<span><span>'+number+'</span></span>';
+    main.querySelector('.image').append(wrapper);return wrapper;
+  }
+  function renderPins(){main.querySelectorAll('.image>.pin').forEach(p=>p.remove());for(const [number,p] of Object.entries(draft))addPin(number,p.x,p.y)}
+  function renderCaption(){
+    const holder=main.querySelector('#caption');holder.innerHTML='<div><span>'+selected+'</span><input></div>';
+    const input=holder.querySelector('input');input.value=captions[selected]||'';
+    // React-style controlled input tracking: bypassing events cannot update
+    // captions and reopening a marker reconstructs its persisted state.
+    const native=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');let tracked=input.value;
+    Object.defineProperty(input,'value',{get(){return native.get.call(this)},set(value){tracked=String(value);native.set.call(this,value)}});
+    input.addEventListener('input',()=>{if(input.value===tracked)return;tracked=input.value;const number=selected,value=input.value;later(()=>{if(!ignoreInput)captions[number]=value;renderCaption();ready()})});
+  }
+  function show(next){
+    generation++;timerSet.forEach(clearTimeout);timerSet.clear();type=next;selected=null;draft={};captions={};pendingMouse=null;count=0;ignoreInput=false;main.className=type;
+    const title=type==='LabelAnImage'?'Name both shapes at the numbered markers.':type==='ShowOnImage'?'Find the center of the circle.':'Place every name on its matching shape.';
+    let content=type==='ShowOnImage'?'<div class="image"><button class="surface">'+imageHTML()+'</button></div>':'<div class="image surface">'+imageHTML()+'</div>';
+    if(type==='LabelAnImage')content+='<div id="caption"></div>';
+    if(type==='DragAndDrop')content+='<div class="item"><div>1</div><h6>Circle</h6></div><div class="item"><div>2</div><h6>Rectangle</h6></div>';
+    main.innerHTML='<h1 id="question-title" data-test-id="Question.participant.title">'+title+'</h1>'+content+'<button data-test-id="Participant.Submit" disabled>Submit</button>';
+    if(type==='LabelAnImage'){addPin(1,100,60,true);addPin(2,300,140,true)}
+    if(type==='ShowOnImage')main.querySelector('.surface').addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const b=main.querySelector('.image').getBoundingClientRect();const x=event.clientX-b.left,y=event.clientY-b.top;later(()=>{if(x&&y)draft={1:{x,y}};renderPins();ready()})});
+    if(type==='DragAndDrop'){
+      main.querySelectorAll('.item').forEach((item,i)=>item.addEventListener('click',()=>later(()=>{selected=i+1;main.querySelectorAll('.item').forEach((el,j)=>el.classList.toggle('selected',j===i))})));
+      main.querySelector('.surface').addEventListener('mousedown',event=>{event.stopPropagation();const b=image().getBoundingClientRect();const item=selected;later(()=>{pendingMouse={item,startX:event.clientX,startY:event.clientY,left:b.left,top:b.top,mode:draft[item]?'re-position':'create'}})});
+    }
+    main.querySelector('[data-test-id="Participant.Submit"]').onclick=()=>{count++;main.querySelector('[data-test-id="Participant.Submit"]').disabled=true;main.insertAdjacentHTML('beforeend','<div role="alert"><div data-test-id="participant-feedback-banner"><i class="fa fa-paper-plane"></i>Answer sent</div></div>')};
+  }
+  window.addEventListener('mouseup',event=>{
+    if(type!=='DragAndDrop'||!pendingMouse)return;const p=pendingMouse;pendingMouse=null;
+    if(Math.hypot(event.clientX-p.startX,event.clientY-p.startY)>=10||!p.item)return;
+    const x=event.clientX-p.left,y=event.clientY-p.top;
+    // Real public component creates/positions a draft; it does not submit here.
+    later(()=>{if(x&&y)draft[p.item]={x,y};renderPins();ready()});
+  });
+  window.imageFixture={show,get type(){return type},get submissionCount(){return count},get values(){return JSON.parse(JSON.stringify(type==='LabelAnImage'?captions:draft))},get delay(){return delay},set delay(value){delay=value},set ignoreInput(value){ignoreInput=value},close(){main.querySelector('[data-test-id="Participant.Submit"]').remove()},movePin(number,x,y){draft[number]={x,y};renderPins();ready()}};
+  show('LabelAnImage');
+})();
+</script></body></html>

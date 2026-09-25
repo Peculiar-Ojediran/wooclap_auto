@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font:18px Arial;margin:24px} main{max-width:760px} img{width:480px;height:220px}button,input,textarea{font:inherit;padding:10px}textarea{width:650px;height:100px} [role=listbox]{border:1px solid;padding:10px}[role=option]{padding:10px;cursor:pointer}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.image{position:relative}.pin{position:absolute;top:80px}.footer{display:flex;justify-content:space-between;padding:10px}.card{padding:10px;background:#def}.board-row{padding:12px;border:1px solid #ddd}
+</style></head><body><main></main><script>
+(() => {
+  const main = document.querySelector('main');
+  let type='Brainstorm', categories=['Communication','Scheduling'], selected=0, drafts=['',''], generation=0, accepted=0, closed=false;
+  let tracked='';
+  const fixture=window.contributionsFixture={delay:35,receiptDelay:70,submissionCount:0,submitMode:'success',show,closeQuestion,changeCategories,addBoardRow,
+    value:()=>drafts[selected], selected:()=>selected, edit:(value)=>{drafts[selected]=value;renderInput();}, submitted:[]};
+  const create=(tag,attrs={},value='')=>{const el=document.createElement(tag); for(const [key,val]of Object.entries(attrs))el.setAttribute(key,String(val));el.textContent=value;return el;};
+  function icon(name){return create('i',{'class':`fas fa-${name}`,'aria-hidden':'true'});}
+  function dropdown(){
+    const wrapper=create('div',{'id':'chooser'}), button=create('button',{'role':'combobox','aria-haspopup':'listbox','aria-expanded':'false','aria-controls':'dropdown-listbox','aria-label':'Choose category'});
+    const label=create('label',{},'Choose category'), display=create('div',{'id':'display'},categories[selected]);wrapper.append(button,label,display);
+    button.addEventListener('click',()=>{if(closed)return;const open=button.getAttribute('aria-expanded')==='true';button.setAttribute('aria-expanded',String(!open));wrapper.querySelector('[role=listbox]')?.remove();if(open)return;
+      const list=create('div',{'id':'dropdown-listbox','role':'listbox'});categories.forEach((category,index)=>{const option=create('div',{'id':`dropdown-option-${index}`,'role':'option','aria-selected':String(index===selected)},category);option.onclick=()=>{const version=generation;button.setAttribute('aria-expanded','false');list.remove();setTimeout(()=>{if(version!==generation||closed)return;selected=index;display.textContent=categories[index];renderInput();},fixture.delay);};list.append(option);});wrapper.append(list);});return wrapper;
+  }
+  function controlled(input){
+    const proto=input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+    const descriptor=Object.getOwnPropertyDescriptor(proto,'value');descriptor.set.call(input,drafts[selected]);tracked=input.value;
+    Object.defineProperty(input,'value',{get(){return descriptor.get.call(this);},set(value){tracked=String(value);descriptor.set.call(this,value);},configurable:true});
+    input.addEventListener('input',()=>{const value=descriptor.get.call(input);if(value===tracked)return;const index=selected,version=generation;tracked=value;descriptor.set.call(input,drafts[index]);setTimeout(()=>{if(version!==generation||closed)return;const used=value.length+(type==='Brainstorm'?(value.match(/\n/g)||[]).length:0);if(used<=180)drafts[index]=value;renderInput();},fixture.delay);});
+  }
+  function renderInput(){
+    if(closed)return;
+    document.querySelector('#contribution-form')?.remove();const form=create('div',{'id':'contribution-form','class':'card'});
+    if(type==='Brainstorm'){
+      const inputWrapper=create('div'),input=create('textarea',{'aria-label':'Write your thoughts'});inputWrapper.append(input);const footer=create('div',{'class':'footer'});const used=drafts[selected].length+(drafts[selected].match(/\n/g)||[]).length;footer.append(create('span',{'id':'characters-left'},`${180-used} characters left`),sendButton());form.append(inputWrapper,footer);document.querySelector('#input-host').append(form);controlled(input);
+    }else{
+      const row=create('div'),badge=create('span',{},String(selected+1)),field=create('div'),label=create('label',{'for':'framework-answer-input'},categories[selected]),input=create('input',{'id':'framework-answer-input','type':'text','maxlength':'180'});field.append(label,input);row.append(badge,field,sendButton());form.append(row,create('span',{},`${180-drafts[selected].length} characters left`));document.querySelector('#input-host').append(form);controlled(input);
+    }
+  }
+  function sendButton(){const button=create('button',{'aria-label':'Submit answer'},'Send');button.append(icon('paper-plane'));button.disabled=!drafts[selected].trim();button.onclick=()=>{if(closed||button.disabled)return;fixture.submissionCount++;const item={category:selected,text:drafts[selected]};fixture.submitted.push(item);button.disabled=true;button.querySelector('i').className='fas fa-sync';const version=generation;setTimeout(()=>{if(version!==generation||closed)return;if(fixture.submitMode==='success'){drafts[item.category]='';renderInput();addBoardRow(item.text,item.category,true);}else if(fixture.submitMode==='clear-only'){drafts[item.category]='';renderInput();}else if(fixture.submitMode==='other-user'){drafts[item.category]='';renderInput();addBoardRow(item.text,item.category,false);}},fixture.receiptDelay);};return button;}
+  function addBoardRow(value,index=0,own=false){const row=create('div',{'class':'board-row'});if(type==='Framework')row.append(create('span',{'aria-labelledby':`category-${index}`},String(index+1)));row.append(create('div',{'id':`answer-${++accepted}`},value));if(own){const menu=create('div',{'aria-label':`Options - ${value} - ${categories[index]}`,'tabindex':'0'});menu.append(icon('ellipsis-v'));row.append(menu);}document.querySelector('#board').append(row);}
+  function show(next='Brainstorm'){
+    type=next;generation++;closed=false;selected=0;drafts=['',''];categories=['Communication','Scheduling'];fixture.submitMode='success';fixture.submissionCount=0;fixture.submitted=[];
+    main.className=type;main.replaceChildren(create('h1',{'data-test-id':'Question.participant.title'},'Suggest one way to improve team work.'));
+    if(type==='Brainstorm')main.append(dropdown());else{
+      const box=create('div',{'class':'image'}),image=create('img',{'alt':'Framework: communication and scheduling','src':'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="480" height="220"%3E%3Crect width="240" height="220" fill="%23ccf"/%3E%3Crect x="240" width="240" height="220" fill="%23cfc"/%3E%3C/svg%3E'});box.append(image);categories.forEach((label,index)=>{const container=create('div'),h3=create('h3',{'id':`category-${index}`,'class':'sr'},label),pin=create('button',{'aria-label':`Add answer for ${label}`,'class':'pin','style':`left:${60+240*index}px`},String(index+1));pin.onclick=()=>{const version=generation;setTimeout(()=>{if(version!==generation||closed)return;selected=index;renderInput();},fixture.delay);};container.append(h3,pin);box.append(container);});main.append(box);
+    }
+    main.append(create('div',{'id':'input-host'}),create('div',{'id':'board'}));if(type==='Brainstorm')renderInput();
+  }
+  function changeCategories(next){categories=next;const chooser=document.querySelector('#chooser');if(chooser)chooser.replaceWith(dropdown());else document.querySelectorAll('h3[id^=category-]').forEach((el,index)=>{el.textContent=categories[index];el.parentElement.querySelector('button').setAttribute('aria-label',`Add answer for ${categories[index]}`);});}
+  function closeQuestion(){closed=true;generation++;main.querySelectorAll('button,input,textarea').forEach(el=>el.disabled=true);const alert=create('div',{'role':'alert'}),banner=create('div',{'data-test-id':'participant-feedback-banner'},'Closed');banner.append(icon('hourglass-end'));alert.append(banner);main.append(alert);}
+  show();
+})();
+</script></body></html>

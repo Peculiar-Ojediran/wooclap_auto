@@ -2,7 +2,7 @@
 
 An unpacked Edge extension that detects a question, requests an AI answer through a local service, and either presents a suggestion or submits the answer automatically. It observes page changes and runs a five-second backup check.
 
-Includes a **local practice page and a demo solver that needs no API key**, plus Wooclap participant adapters for choices, text sorting, seven additional types with automatic application, and seven types with answer previews. The user reports that live multiple-choice answering works. Sorting and the new types have separate local verification; their live event acceptance is unverified. See [the support roadmap](docs/QUESTION_TYPES_ROADMAP.md), [compatibility evidence](docs/WOOCLAP_COMPATIBILITY.md), and [verification results](docs/VERIFICATION.md).
+Includes a **local practice page and a demo solver that needs no API key**, plus Wooclap participant adapters for choices, text sorting, all 14 additional answer types with guarded automatic application for recognized layouts. The user reports that live multiple-choice answering works. Sorting and the new types have separate local verification; their live event acceptance is unverified. See [the support roadmap](docs/QUESTION_TYPES_ROADMAP.md), [compatibility evidence](docs/WOOCLAP_COMPATIBILITY.md), and [verification results](docs/VERIFICATION.md).
 
 ## Try the local version
 
@@ -63,7 +63,7 @@ npm start
 
 Use **Save & check connection** again. This checks the local service and whether a key is configured; the next answer verifies actual OpenAI access. The popup identifies the session source and shows the latest response's model, elapsed time, and reported token usage. You can test real AI answers on the local practice page before trying a Wooclap event. Join an event manually, open its participant question, and choose **Start on this tab**.
 
-For Wooclap, leave the advanced selectors empty initially. The adapters recognize supported participant controls, wait for their rendered updates, and use the separate submit button. Keep **Clicking a choice immediately submits the answer** disabled for Wooclap multiple-choice questions. Begin with suggestion mode while checking a new live layout. Types marked **Preview** below display answer data for manual application, including when automatic mode is selected.
+For Wooclap, leave the advanced selectors empty initially. The adapters recognize supported participant controls, wait for their rendered updates, and use the separate submit button. Keep **Clicking a choice immediately submits the answer** disabled for Wooclap multiple-choice questions. Begin with suggestion mode while checking a new live layout. Unrecognized variants may display a manual preview or require review, including when automatic mode is selected.
 
 The API key stays in `.env` on your computer; do not put it in the extension. The extension stores a separate pairing token in local browser settings. If you set `BRIDGE_TOKEN` in `.env`, use that value in the extension instead of the generated file; it must be at least 32 characters long. `.env`, `.local`, and generated build output are ignored by Git.
 
@@ -81,12 +81,14 @@ The API key stays in `.env` on your computer; do not put it in the extension. Th
 | Matching | Set and verify each source dropdown, then submit | Current observed controls require unique destinations; duplicate assignments are rejected |
 | Rating | Set and verify each proposition's displayed scale, then submit | Inspected integer scales; missing personal preferences require review |
 | Prioritization | Enter and verify allocations, then submit | Nonnegative points must total the visible budget |
-| Brainstorming | Preview one contribution | Uses the currently selected category; apply and submit manually |
-| Framework | Preview a contribution associated with an image category | Requires the framework image and visible category labels; manual application |
-| Label an image | Preview one caption per visible numbered marker | Manual application |
-| Find on image | Preview one normalized image point | Manual placement and submission |
-| Drag and drop | Preview label-to-position assignments | Manual placement and submission |
-| Script concordance test / SCT Judgment | Preview a scale proposal with case context | Custom scale meanings may be unavailable; ambiguous interpretation requires review; manual application |
+| Brainstorming | Choose a category and send one contribution | Verify a new participant-owned receipt; audience activity never triggers another answer |
+| Framework | Open an image category and send one contribution | Preserve image/category mapping and verify a participant-owned receipt |
+| Label an image | Fill every caption, reopen each marker to verify, then submit | Requires recognized numbered pins and retained editable captions |
+| Find on image | Place and verify one normalized image point, then submit | One point per question; image must be loaded with supported geometry |
+| Drag and drop | Place every numbered label, verify positions, then submit | Uses the inspected image mouse controls; changed image geometry stops application |
+| Script concordance test / SCT Judgment | Read complete custom scale labels, select and verify a position, then submit | Preserve optional comments; required extra comments remain manual |
+
+SCT preparation selects each local scale position to read its description, then restores an existing selection. If initially unanswered, it leaves the first position as an **unsubmitted draft**, including in suggestion mode. Image automation rejects cropped/letterboxed images, transformed containers, and unsupported controls; exact image-edge coordinates require manual placement. See the [remaining-types plan](docs/REMAINING_TYPES_PLAN.md) for the implementation and limits.
 
 Presentation activities (Audio / Video, Slide, Timer, Spin the wheel) are waiting states and do not trigger an AI request. **Create using AI** is an organizer tool; the generated participant question is handled by its actual type.
 
@@ -114,7 +116,7 @@ npm run test:types
 
 Stop the demo/API service before running browser tests: they start an isolated test bridge on port `4318`. The browser smoke test exercises the loaded extension with the local practice page. It tries Microsoft Edge first, then bundled Chromium. If Chromium is missing, install it with `npx playwright install chromium`. The image test specifically requires installed Microsoft Edge and exercises its toolbar action to grant screenshot access. Tests use temporary browser profiles, leaving your normal Edge profile untouched.
 
-`test:types` exercises the new question families through the loaded Edge extension and local participant fixtures. Standard tests use deterministic solvers or injected SDK transports and make no paid API calls. Coverage includes asynchronous controls, screenshots, decimal precision, complete field answers, matching constraints, repeated contributions, participant edits, cancellation, and preview-only types. See [verification results](docs/VERIFICATION.md) for the latest executed checks and counts.
+`test:types` exercises the new question families through the loaded Edge extension and local participant fixtures. Standard tests use deterministic solvers or injected SDK transports and make no paid API calls. Coverage includes asynchronous controls, screenshots, decimal precision, complete field answers, matching constraints, repeated contributions, participant edits, cancellation, category receipts, caption retention, image geometry/zoom, custom scenario scales, and preview fallbacks. See [verification results](docs/VERIFICATION.md) for the latest executed checks and counts.
 
 Explicit paid verification commands (never run by `npm test` or `npm run check`):
 
@@ -124,7 +126,7 @@ npm run test:openai:browser
 npm run test:openai:types
 ```
 
-`test:openai` makes at most three real requests; `test:openai:browser` makes at most two through the Edge extension and a network-isolated Wooclap layout replay. Those earlier checks passed using `gpt-4.1-mini`. `test:openai:types` is a separate, explicit **maximum-three-request** check for numeric, matching, and image-point schemas; it requires installed Edge to render the synthetic image. Adding this command is not evidence that it passed: consult [verification results](docs/VERIFICATION.md) for its execution status. These tests do not submit to a real Wooclap event. Sanitized reports and screenshots are saved under `test-results/`.
+`test:openai` makes at most three real requests; `test:openai:browser` makes at most two through the Edge extension and a network-isolated Wooclap layout replay. Those earlier checks passed using `gpt-4.1-mini`. `test:openai:types` is a separate, explicit **maximum-three-request** check for numeric, matching, and image-point schemas; all three passed on 2026-09-24. It requires installed Edge to render the synthetic image. See [verification results](docs/VERIFICATION.md) for usage and scope. These tests do not submit to a real Wooclap event. Sanitized reports and screenshots are saved under `test-results/`.
 
 | Path | Purpose |
 | --- | --- |

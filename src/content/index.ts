@@ -2,6 +2,7 @@ import { observePage, selectAnswer, submitAnswer, hasSubmissionConfirmation } fr
 import { fingerprint, validateAnswer } from '../shared/core';
 import { DEFAULT_SETTINGS, type PendingAnswer, type SelectorConfig, type Observation } from '../shared/types';
 import { prepareStructured } from './structured';
+import { prepareRemaining } from './remaining';
 
 // An injected copy must not create a second observer after a service-worker wakeup.
 const host = globalThis as typeof globalThis & { __wooclapAutoLoaded?: boolean };
@@ -54,11 +55,15 @@ function install(): void {
   async function prepareAndScan(): Promise<void> {
     if (!runId || applying || preparing) return;
     const expectedRun = runId;
+    const expectedRevision = userRevision;
     preparing = true;
     try {
-      await prepareStructured(document, () => {
+      const guard = () => {
         if (runId !== expectedRun || document.visibilityState !== 'visible') throw new Error('Session paused or tab inactive.');
-      });
+        if (userRevision !== expectedRevision) throw new Error('You interacted with the page. Question preparation stopped.');
+      };
+      await prepareStructured(document, guard);
+      await prepareRemaining(document, guard);
       preparing = false;
       if (runId === expectedRun) scan();
     } catch (error) {
@@ -129,7 +134,10 @@ function install(): void {
       if (!result.submittedBySelection) {
         check();
         if (userRevision !== initialRevision) throw new Error('Page inputs changed before submission.');
-        await submitAnswer(selectors);
+        await submitAnswer(selectors, document, () => {
+          check();
+          if (userRevision !== initialRevision) throw new Error('Page inputs changed before submission.');
+        });
       }
       // Poll for a positive receipt. Never repeat an uncertain submit action.
       for (let count = 0; count < 20; count++) {

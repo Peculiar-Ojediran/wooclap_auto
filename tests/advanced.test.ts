@@ -15,6 +15,7 @@ function setup(t: TestContext, type = 'Rating') {
   t.after(() => dom.window.close());
   Object.defineProperty(dom.window.HTMLImageElement.prototype, 'complete', { get: () => true, configurable: true });
   Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalWidth', { get: () => 400, configurable: true });
+  Object.defineProperty(dom.window.HTMLImageElement.prototype, 'naturalHeight', { get: () => 200, configurable: true });
   const fixture = (dom.window as unknown as { advancedFixture: Fixture }).advancedFixture;
   fixture.show(type);
   const doc = dom.window.document;

@@ -1,6 +1,6 @@
 # Wooclap question-type roadmap and implementation status
 
-Original plan: 2026-09-23. Implementation status updated: 2026-09-24. The 14 additional types now have extraction and answer contracts: seven support guarded application/submission and seven provide previews for manual application. The sections explicitly marked **historical plan** preserve the proposed direction and release criteria; they are not claims that every planned interaction is complete. Current executed checks are recorded in [VERIFICATION.md](VERIFICATION.md).
+Original plan: 2026-09-23. Implementation status updated: 2026-09-24. All 14 additional types now have guarded application/submission for the recognized participant layouts. The [remaining-types implementation plan](REMAINING_TYPES_PLAN.md) covers the final seven paths. The sections explicitly marked **historical plan** preserve the proposed direction and release criteria; they are not claims that every planned interaction is complete. Current executed checks are recorded in [VERIFICATION.md](VERIFICATION.md).
 
 ## Current coverage
 
@@ -9,7 +9,7 @@ Original plan: 2026-09-23. Implementation status updated: 2026-09-24. The 14 add
 | Multiple choice | Implemented for single and multiple answers, including true/false. User reports that live answering works. | Keep regression coverage during the contract migration. |
 | Poll | Recognized by the existing choice adapter when the participant controls match the supported layout. No separate live Poll verification recorded. | Test Poll explicitly; distinguish factual prompts from personal preferences. |
 | Sorting | Text ordering implemented; media/comment review findings repaired. Live sorting acceptance remains unverified. | Verify actual receipt in a controlled live event. |
-| Additional answer types | Seven application/submission paths and seven previews; see the matrix below. | Verify live acceptance and complete the preview interaction paths separately. |
+| Additional answer types | All 14 application/submission paths; see the matrix below. | Verify live acceptance and additional layout variants separately. |
 | Audio / Video, Slide, Timer, Spin the wheel | Recognized presentation/non-answer states. | Wait without an AI request; resume on the next supported question. |
 | Create using AI | An organizer authoring action. | No participant answer adapter needed; recognize the generated question's actual type. |
 
@@ -28,15 +28,15 @@ Repeated tiles in the screenshot count once. Wooclap's [question-type catalog](h
 | Matching | Apply and submit | Native dropdown controls; the inspected component clears a prior assignment when its destination is reused, so this adapter sets `uniqueTargets: true` |
 | Rating | Apply and submit | One numeric value per proposition; inspected integer scales and keyboard controls; personal preferences must be supplied or reviewed |
 | Prioritization | Apply and submit | Nonnegative values satisfying the visible point budget; this is allocation, not a sorting order |
-| Brainstorming | Preview | One contribution to the currently selected category; choosing another category and receipt verification remain manual |
-| Framework | Preview | Image and visible named categories; one categorized contribution; application and receipt verification remain manual |
-| Label an image | Preview | One text caption per visible numbered marker; application remains manual |
-| Find on image | Preview | One normalized image point; placement and submission remain manual |
-| Drag and drop | Preview | Complete item-to-position assignments; interaction library and final receipt remain unverified |
-| Script concordance test | Preview | Visible case/additional information and scale positions; unavailable custom scale meanings require review |
-| SCT Judgment | Preview | Visible scenario/behavior and scale positions; unavailable custom scale meanings require review |
+| Brainstorming | Apply and submit | Inspect all menu categories, choose one, verify text, send once, and require a new matching participant-owned answer |
+| Framework | Apply and submit | Preserve image/category locations; open the chosen category and verify its new participant-owned contribution |
+| Label an image | Apply and submit | Fill every numbered marker; reopen each caption to verify retained controlled state before submitting |
+| Find on image | Apply and submit | One point per question; verify marker coordinates and receipt; supported uncropped image geometry only |
+| Drag and drop | Apply and submit | Select each numbered item and place it through the inspected image mouse handlers; verify all positions before submitting |
+| Script concordance test | Apply and submit | Full case and five custom scale meanings; verify actual score, including zero; preserve optional comments |
+| SCT Judgment | Apply and submit | Full scenario and four custom scale meanings; verify hidden-label handle position and selected description |
 
-The model is instructed to avoid inventing personal opinions or experiences. A subjective prompt alone does not provide the participant's preferences. Preview-only controls stay manual even when the extension is in automatic mode.
+The model is instructed to avoid inventing personal opinions or experiences. A subjective prompt alone does not provide the participant's preferences. Unrecognized controls stay manual even when the extension is in automatic mode. SCT preparation visits local draft scale positions to expose labels, then restores an existing score or leaves an unsubmitted first-position draft. Required SCT comments remain manual.
 
 ## Implemented foundation
 
@@ -44,7 +44,7 @@ The model is instructed to avoid inventing personal opinions or experiences. A s
 - Answer families, question constraints, field definitions, preview capabilities, and contribution metadata are represented in shared contracts. Protocol 2 is required by the new extension; legacy unversioned requests remain accepted by the new bridge.
 - Question fingerprints include full answer context and exclude mutable input values. A separate participant-input snapshot prevents a pending proposal from overwriting later participant edits.
 - Text contribution handling prevents a successful response or audience-board update from creating an additional automatic contribution. Uncertain submissions are not retried.
-- Family-specific popup previews show proposed values, field mappings, orders, or image coordinates. Image point previews do not imply verified pointer interaction or an overlay on the live image.
+- Family-specific popup previews show proposed values, field mappings, orders, or image coordinates. Recognized image layouts have verified placement paths; popup image overlays remain follow-up work.
 
 Upgrade by rebuilding, restarting the bridge, reloading the extension at `edge://extensions`, and refreshing the participant page. This loads the matching protocol-2 components and preserves the existing pairing token.
 
@@ -109,7 +109,7 @@ Preserve pause, tab visibility, navigation, closed-question, and stale-answer ch
 
 ### Historical design requirements: popup and modes
 
-The original target included editable text, numbers with units context, field/value tables, source/target pairs, numbered orders, allocation totals, and image overlays. Family-specific previews are implemented; editable suggestions and image overlays remain separate follow-up work. Keep the model's explanation separate from the text sent to Wooclap and validate any future edited answers before enabling approval.
+The original target included editable text, numbers with units context, field/value tables, source/target pairs, numbered orders, allocation totals, and image overlays. Family-specific previews and editable scalar/field suggestions are implemented. Edited values survive popup polling and must pass validation before approval. Model-review answers and preview-only layouts remain read-only. Image overlays remain follow-up work. The model's explanation stays separate from the text submitted to Wooclap.
 
 Each new type starts with local verification and suggestion-mode review. Enable automatic application after its interaction and confirmation path are tested. Feedback prompts may ask for personal opinions that the extension cannot infer: use user-provided preferences or keep the proposed response editable for approval. Factual Word Cloud/Open question prompts can follow the factual-answer flow. Do not label every feedback response as a uniquely correct answer.
 
@@ -143,7 +143,7 @@ The original phase order below favored reusable controls before geometry-depende
 - Rating can contain several propositions. Prioritization currently allocates 100 points; implementation must check participant-visible constraints rather than treating it as ordering. [Rating](https://docs.wooclap.com/en/articles/8317094-rating), [Prioritisation](https://docs.wooclap.com/en/articles/8344712-prioritisation)
 - Brainstorming uses response categories. Framework adds an image with labeled response regions, so it may depend on the visual capture work. [Brainstorming](https://docs.wooclap.com/en/articles/3696263-brainstorming), [Framework](https://docs.wooclap.com/en/articles/8312233-framework)
 - Label an image requires all captions before submission. Find on image can require a separate submission for each point; clicking another point before submitting replaces the selection. [Label an image](https://docs.wooclap.com/en/articles/5580818-label-an-image), [Find on image](https://docs.wooclap.com/en/articles/3849719-find-on-image)
-- Drag and drop places labels onto an image, with editable placements before final submission. Exact save/submit transitions still need participant-component inspection. [Drag and Drop](https://docs.wooclap.com/en/articles/9991842-drag-and-drop)
+- Drag and drop places labels onto an image, with editable placements before final submission. The inspected component uses item selection followed by image mousedown/window mouseup to update a draft; a separate submit control sends the answer. [Drag and Drop](https://docs.wooclap.com/en/articles/9991842-drag-and-drop)
 - SCT questions compare reasoning with expert-panel responses. The model can propose a reasoned scale choice; it cannot infer an undisclosed panel distribution. [Script concordance test](https://docs.wooclap.com/en/articles/2743688-script-concordance-test), [SCT Judgment](https://docs.wooclap.com/en/articles/4146422-sct-judgment)
 
 ### Visual interaction requirements
@@ -171,10 +171,10 @@ Dynamic contribution types need a specific regression: keep the question open af
 The expansion changes these areas:
 
 - `src/shared/types.ts`, `src/shared/core.ts`: versioned question/answer families, validation, type-specific fingerprints.
-- `src/content/wooclap.ts`, `src/content/adapter.ts`, `src/content/structured.ts`, and `src/content/advanced.ts`: shared guards and per-type behavior.
+- `src/content/wooclap.ts`, `src/content/adapter.ts`, `src/content/structured.ts`, `src/content/advanced.ts`, and the `remaining.ts` registry with `contributions.ts`, `image-interactions.ts`, and `scenarios.ts`: shared guards and per-type behavior.
 - `src/content/index.ts`, `src/background.ts`: capability dispatch, contribution receipts, progress/ledger handling, cached-contract migration.
 - `server/validation.ts`, `server/solver.ts`, bridge health/protocol checks: matching request/response schemas and per-type prompts.
 - `src/ui/popup.ts`, popup markup/styles: family-specific previews with automatic approval disabled for preview-only types.
 - `tests/fixtures/`, unit/SDK tests, Edge replay scripts, and compatibility documentation: evidence for each capability.
 
-The original first milestone, **sorting repairs + contract foundation + Find a number**, is implemented along with the remaining application paths and previews listed above. Next milestones are controlled live acceptance checks, reliable category/caption/geometry interactions with positive receipts, and complete custom scenario-scale extraction. Promote a preview to automatic application only after those interaction and receipt checks pass; a valid AI answer alone is insufficient.
+The original first milestone, **sorting repairs + contract foundation + Find a number**, is implemented along with the remaining application paths and previews listed above. Category/caption/geometry interactions, positive local receipts, and complete custom scenario-scale extraction are implemented. Next milestones are controlled live acceptance checks and additional variants (multiple image points, required scenario comments, reusable matching destinations, and unsupported geometry). Local replay and real API responses remain separate evidence from live acceptance.

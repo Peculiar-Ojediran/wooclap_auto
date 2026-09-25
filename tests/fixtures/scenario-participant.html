@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font:18px system-ui;padding:20px}main{max-width:850px}ul{list-style:none;padding:0}[role=slider]{margin:40px 20px;outline:1px solid #ddd;padding:12px}
+.range{height:35px;position:relative}.range>span{position:absolute;top:10px}.handle{width:18px;height:18px;background:#7656da;border-radius:50%;margin-left:-9px}.line{height:2px;background:#7656da}.range ul{position:relative;margin:0;height:35px}.range li{position:absolute;top:0;cursor:pointer}.range li p{margin:30px 0}textarea{width:90%;height:50px}button{padding:10px}
+</style></head><body><main id="root"></main><script>
+// Mirrors AbstractSCT and RatingScale public component behavior: selected-label
+// rendering, values-index keyboard navigation, hidden SCT Judgment numbers,
+// Concordance's zero/ARIA fallback, and an independent explicit submit action.
+(()=>{
+const root=document.querySelector('#root');let kind,values,score,labels,comment='',delay=35,submissions=0,keyCount=0,submitted;
+function show(type='Concordance'){
+kind=type;values=type==='Concordance'?[-2,-1,0,1,2]:[-2,-1,1,2];score=undefined;comment='';submitted=undefined;
+labels=type==='Concordance'?['Much less likely','Less likely','No change','More likely','Much more likely']:['Very inappropriate','Somewhat inappropriate','Somewhat appropriate','Very appropriate'];
+root.className=kind;root.innerHTML='<h1 data-test-id="Question.participant.title" id="question-title">Assess the hypothesis with the additional evidence.</h1><ul id="scale-container"><li><div><div><span>Context</span><div id="case-text">The forecast says rain is likely.</div></div><div><span>Additional information</span><div>New radar shows no change in cloud cover.</div></div></div></li><span>Impact</span><p id="selected-label"></p><div role="slider" aria-label="Impact" aria-valuemin="-2" aria-valuemax="2" aria-valuenow="-2" aria-valuetext="Much less likely" step="1" tabindex="0"><div class="range"><span class="handle" draggable="false" style="left:0%"></span><span class="line" style="width:0%"></span><ul>'+values.map((v,i)=>'<li style="left:'+(i/(values.length-1)*100)+'%"><span><p>'+(type==='Concordance'?v:'')+'</p></span></li>').join('')+'</ul></div></div></ul><div><p>Optional expert comment</p><textarea aria-label="Expert comment"></textarea></div><button data-test-id="Participant.Submit" disabled>Submit</button>';
+const slider=root.querySelector('[role=slider]');
+slider.addEventListener('keydown',event=>{keyCount++;if(!slider.isConnected)return;let index=values.indexOf(score);switch(event.key){case'Home':index=0;break;case'End':index=values.length-1;break;case'ArrowRight':case'ArrowUp':event.preventDefault();index++;break;case'ArrowLeft':case'ArrowDown':event.preventDefault();index--;break;default:return;}setScore(values[Math.max(0,Math.min(values.length-1,index))],slider)});
+root.querySelectorAll('.range li').forEach((row,i)=>row.addEventListener('click',()=>setScore(values[i],slider)));
+root.querySelector('textarea').addEventListener('input',event=>{comment=event.target.value});
+root.querySelector('button').addEventListener('click',()=>{submissions++;submitted={score,comment};root.querySelector('button').remove();root.insertAdjacentHTML('beforeend','<div role="alert"><div data-test-id="participant-feedback-banner"><i class="fa fa-paper-plane"></i>Answer received</div></div>')});
+}
+function render(){const slider=root.querySelector('[role=slider]');if(!slider)return;const index=values.indexOf(score),pct=(Math.max(index,0)/(values.length-1)*100)+'%';slider.setAttribute('aria-valuenow',String(score||values[0]));slider.setAttribute('aria-valuetext','Default translation for '+(score??values[0]));const handle=slider.querySelector('[draggable=false]');handle.style.left=pct;if(kind==='Concordance'&&score!==undefined)handle.setAttribute('data-score',String(score));else handle.removeAttribute('data-score');slider.querySelector('.line').style.width=pct;root.querySelector('#selected-label').textContent=score===undefined?'':labels[index];const submit=root.querySelector('[data-test-id="Participant.Submit"]');if(submit)submit.disabled=score===undefined;}
+function setScore(value,slider){setTimeout(()=>{if(!slider.isConnected||!root.querySelector('[data-test-id="Participant.Submit"]'))return;score=value;render()},delay)}
+window.scenarioFixture={show,get score(){return score},get labels(){return labels},get submitted(){return submitted},get submissionCount(){return submissions},get keyCount(){return keyCount},get delay(){return delay},set delay(value){delay=value},select(value){score=value;render()},setLabels(value){labels=value;render()},close(){root.querySelector('[data-test-id="Participant.Submit"]')?.remove()}};
+show();
+})();</script></body></html>

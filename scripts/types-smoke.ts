@@ -10,14 +10,15 @@ import type { Answer, Question, SessionState } from '../src/shared/types';
 // Deterministic protocol/interaction checks. This script never contacts OpenAI.
 function fixtureAnswer(q: Question): Answer {
   const base: Answer = { selectedChoiceIds: [], explanation: 'Local interaction test answer.', needsReview: false };
+  if (q.wooclapType === 'LabelAnImage') return { ...base, values: q.fields!.map((f, i) => ({ id: f.id, value: i === 0 ? 'Circle' : 'Rectangle' })) };
   if (q.kind === 'numeric') return { ...base, value: '42' };
   if (q.kind === 'text') return { ...base, value: 'A local test response' };
   if (q.kind === 'fields' || q.kind === 'matching') return { ...base, values: q.fields!.map((f, i) => ({ id: f.id,
     value: f.kind === 'select' ? f.options![q.kind === 'matching' ? i % f.options!.length : 0].id : 'Paris' })) };
   if (q.kind === 'rating') return { ...base, values: q.fields!.map(f => ({ id: f.id, value: String(f.min! + 1) })) };
   if (q.kind === 'allocation') return { ...base, values: q.fields!.map((f, i) => ({ id: f.id, value: String(i === 0 ? q.constraints!.total : 0) })) };
-  if (q.kind === 'categorized') return { ...base, values: [{ id: q.choices[0].id, value: 'One local test contribution' }] };
-  if (q.kind === 'point' || q.kind === 'placements') return { ...base, points: q.choices.map(c => ({ id: c.id, x: 0.5, y: 0.5 })) };
+  if (q.kind === 'categorized') return { ...base, values: [{ id: q.choices.at(-1)!.id, value: 'One local test contribution' }] };
+  if (q.kind === 'point' || q.kind === 'placements') return { ...base, points: q.choices.map((c, i) => ({ id: c.id, x: i ? 0.75 : 0.25, y: i ? 0.7 : 0.3 })) };
   if (q.kind === 'scenario') return { ...base, selectedChoiceIds: [q.choices[Math.floor(q.choices.length / 2)].id] };
   throw new Error(`Unexpected test kind: ${q.kind}`);
 }
@@ -49,7 +50,8 @@ try {
     viewport: { width: 1280, height: 1200 }, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--enable-unsafe-extension-debugging'] });
   await context.route('https://**.wooclap.com/**', async route => {
     if (!route.request().isNavigationRequest()) return route.abort();
-    const fixture = new URL(route.request().url()).searchParams.get('fixture') === 'advanced' ? 'advanced' : 'structured';
+    const requested = new URL(route.request().url()).searchParams.get('fixture') ?? 'structured';
+    const fixture = ['advanced', 'structured', 'contributions', 'image', 'scenario'].includes(requested) ? requested : 'structured';
     await route.fulfill({ contentType: 'text/html', body: await readFile(`tests/fixtures/${fixture}-participant.html`, 'utf8') });
   });
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
@@ -68,7 +70,7 @@ try {
   const state = async (): Promise<SessionState> => (await command({ type: 'GET_STATE' })).state;
 
   // The fixture API and cases are populated by the corresponding source-based adapters.
-  const cases: { fixture: string; type: string; kind: string; preview?: boolean }[] = [
+  const cases: { fixture: string; type: string; kind: string; preview?: boolean; zoom?: number }[] = [
     { fixture: 'structured', type: 'numeric', kind: 'numeric' },
     { fixture: 'structured', type: 'text', kind: 'text' },
     { fixture: 'structured', type: 'wordcloud', kind: 'text' },
@@ -77,29 +79,41 @@ try {
     { fixture: 'structured', type: 'matching', kind: 'matching' },
     { fixture: 'advanced', type: 'Rating', kind: 'rating' },
     { fixture: 'advanced', type: 'Prioritization', kind: 'allocation' },
-    { fixture: 'advanced', type: 'Brainstorm', kind: 'categorized', preview: true },
-    { fixture: 'advanced', type: 'Framework', kind: 'categorized', preview: true },
-    { fixture: 'advanced', type: 'LabelAnImage', kind: 'fields', preview: true },
+    { fixture: 'contributions', type: 'Brainstorm', kind: 'categorized' },
+    { fixture: 'contributions', type: 'Framework', kind: 'categorized' },
+    { fixture: 'image', type: 'LabelAnImage', kind: 'fields' },
+    { fixture: 'image', type: 'ShowOnImage', kind: 'point' },
+    { fixture: 'image', type: 'DragAndDrop', kind: 'placements' },
+    { fixture: 'scenario', type: 'Concordance', kind: 'scenario' },
+    { fixture: 'scenario', type: 'SCTJudgment', kind: 'scenario' },
     { fixture: 'advanced', type: 'ShowOnImage', kind: 'point', preview: true },
-    { fixture: 'advanced', type: 'DragAndDrop', kind: 'placements', preview: true },
-    { fixture: 'advanced', type: 'Concordance', kind: 'scenario', preview: true },
-    { fixture: 'advanced', type: 'SCTJudgment', kind: 'scenario', preview: true },
+    { fixture: 'image', type: 'ShowOnImage', kind: 'point', zoom: 1.25 },
+    { fixture: 'image', type: 'DragAndDrop', kind: 'placements', zoom: 0.9 },
   ];
   for (const scenario of cases) {
     await command({ type: 'PAUSE' });
     const url = `https://app.wooclap.com/CODEX-TYPES?fixture=${scenario.fixture}`;
     await participant.goto(url);
-    await participant.evaluate(({ type, fixture }) => ((window as any)[fixture === 'advanced' ? 'advancedFixture' : 'fixture']).show(type), scenario);
+    await participant.evaluate(({ type, fixture }) => ((window as any)[fixture === 'structured' ? 'fixture' : `${fixture}Fixture`]).show(type), scenario);
     const { targetInfos } = await cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
     const tab = targetInfos.find(target => target.url === participant.url()); assert.ok(tab);
     await cdp.send('Extensions.triggerAction', { id: extensionId, targetId: tab.targetId });
     await participant.bringToFront();
     const tabId = await controls.evaluate(async url => (await chrome.tabs.query({ url }))[0].id!, url);
+    if (scenario.zoom) await controls.evaluate(({ tabId, zoom }) => chrome.tabs.setZoom(tabId, zoom), { tabId, zoom: scenario.zoom });
     const before = requests.length;
     await command({ type: 'START', tabId });
-    await eventually(state, s => s.phase === (scenario.preview ? 'suggestion' : 'submitted'), scenario.type);
+    await eventually(state, s => s.phase === (scenario.preview ? 'suggestion' : 'submitted'), scenario.type).catch(async error => {
+      console.log(JSON.stringify({ requested: requests.at(-1), current: await controls.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: 'READ_CURRENT' }), tabId),
+        fixtureText: await participant.locator('main').textContent() }, null, 2));
+      throw error;
+    });
     assert.equal(requests.length, before + 1, `${scenario.type}: one AI request`);
     assert.equal(requests.at(-1)!.kind, scenario.kind);
+    if (!scenario.preview) {
+      assert.equal(requests.at(-1)!.application, 'automatic');
+      assert.equal(await participant.evaluate(fixture => (window as any)[fixture === 'structured' ? 'fixture' : `${fixture}Fixture`].submissionCount, scenario.fixture), 1);
+    }
     if (scenario.preview) {
       assert.equal((await state()).pending?.question.application, 'preview');
       const rejected = await controls.evaluate(() => chrome.runtime.sendMessage({ type: 'APPROVE' }));
@@ -113,7 +127,25 @@ try {
       assert.equal(requests.length, before + 1, 'A cleared contribution form must not trigger another answer.');
       console.log('PASS: open contribution form does not repeat the answer');
     }
-    results.push({ type: scenario.type, kind: scenario.kind, preview: Boolean(scenario.preview), passed: true });
+    if (scenario.fixture === 'contributions') {
+      await participant.evaluate(() => {
+        (window as any).contributionsFixture.addBoardRow('Another participant idea', 0, false);
+        (window as any).contributionsFixture.addBoardRow('More audience activity', 1, false);
+      });
+      await new Promise(resolve => setTimeout(resolve, 1800));
+      assert.equal(requests.length, before + 1);
+      assert.equal(await participant.evaluate(() => (window as any).contributionsFixture.submissionCount), 1);
+      console.log('PASS: audience activity does not repeat a contribution');
+    }
+    if (scenario.fixture === 'image' && scenario.kind === 'point') {
+      await participant.evaluate(() => document.querySelector('[role="alert"]')?.remove());
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      assert.equal(requests.length, before + 1, 'A point contribution cannot be sent twice when feedback disappears.');
+      assert.equal(await participant.evaluate(() => (window as any).imageFixture.submissionCount), 1);
+    }
+    if (scenario.fixture === 'scenario') assert.ok(requests.at(-1)!.choices.every(choice => !choice.text.startsWith('Scale position')));
+    if (scenario.zoom) await controls.evaluate(tabId => chrome.tabs.setZoom(tabId, 1), tabId);
+    results.push({ type: scenario.type, kind: scenario.kind, preview: Boolean(scenario.preview), zoom: scenario.zoom, passed: true });
     console.log(`PASS: ${scenario.type} ${scenario.preview ? 'answer preview' : 'verified submission'}`);
   }
   assert.ok(cases.length > 0, 'The type test cases must be populated.');
@@ -146,6 +178,60 @@ try {
   results.push({ name: 'presentation-does-not-request-answer', passed: true });
   console.log('PASS: presentation content consumes no AI requests');
   await command({ type: 'PAUSE' });
+
+  const openFixture = async (fixture: string, type: string) => {
+    const nextUrl = `https://app.wooclap.com/CODEX-TYPES?fixture=${fixture}`;
+    await participant.goto(nextUrl);
+    await participant.evaluate(({ fixture, type }) => (window as any)[`${fixture}Fixture`].show(type), { fixture, type });
+    const { targetInfos } = await cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
+    const target = targetInfos.find(target => target.url === participant.url()); assert.ok(target);
+    await cdp.send('Extensions.triggerAction', { id: extensionId, targetId: target.targetId });
+    await participant.bringToFront();
+    return controls.evaluate(async url => (await chrome.tabs.query({ url }))[0].id!, nextUrl);
+  };
+  // Geometry can change without an input event or question-text change.
+  const imageTab = await openFixture('image', 'ShowOnImage');
+  await command({ type: 'START', tabId: imageTab });
+  await eventually(state, s => s.phase === 'suggestion', 'image resize guard');
+  await controls.evaluate(tabId => chrome.tabs.setZoom(tabId, 1.25), imageTab);
+  await command({ type: 'APPROVE' });
+  assert.equal((await state()).phase, 'paused');
+  assert.equal(await participant.evaluate(() => (window as any).imageFixture.submissionCount), 0);
+  assert.equal(await participant.locator('[data-test-id="Participant.Submit"]').isDisabled(), true, 'No point was placed after geometry changed.');
+  await controls.evaluate(tabId => chrome.tabs.setZoom(tabId, 1), imageTab);
+  results.push({ name: 'pending-image-geometry-change-blocked', passed: true });
+  console.log('PASS: changed image geometry prevents stale placement');
+
+  await command({ type: 'SAVE_SETTINGS', settings: { ...settings, mode: 'auto' } });
+  const contributionTab = await openFixture('contributions', 'Brainstorm');
+  await participant.evaluate(() => { (window as any).contributionsFixture.submitMode = 'other-user'; });
+  const beforeUncertain = requests.length;
+  await command({ type: 'START', tabId: contributionTab });
+  await eventually(state, s => s.phase === 'paused', 'unconfirmed contribution');
+  assert.equal(await participant.evaluate(() => (window as any).contributionsFixture.submissionCount), 1);
+  assert.equal(requests.length, beforeUncertain + 1);
+  assert.match((await state()).detail, /no confirmation|uncertain/i);
+  await command({ type: 'START', tabId: contributionTab });
+  await new Promise(resolve => setTimeout(resolve, 1800));
+  assert.equal(await participant.evaluate(() => (window as any).contributionsFixture.submissionCount), 1, 'Resuming must not repeat an uncertain send.');
+  assert.equal(requests.length, beforeUncertain + 1);
+  results.push({ name: 'unconfirmed-contribution-never-retried', passed: true });
+  console.log('PASS: another participant receipt does not confirm or retry our contribution');
+  await command({ type: 'PAUSE' });
+
+  const scenarioTab = await openFixture('scenario', 'Concordance');
+  await participant.evaluate(() => { (window as any).scenarioFixture.delay = 100; });
+  const beforePreparation = requests.length;
+  await command({ type: 'START', tabId: scenarioTab });
+  await eventually(() => participant.evaluate(() => (window as any).scenarioFixture.keyCount), count => count > 0, 'scenario preparation begins');
+  await command({ type: 'PAUSE' });
+  const keysAtPause = await participant.evaluate(() => (window as any).scenarioFixture.keyCount);
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.equal(await participant.evaluate(() => (window as any).scenarioFixture.keyCount), keysAtPause, 'No new control events after pause.');
+  assert.equal(await participant.evaluate(() => (window as any).scenarioFixture.submissionCount), 0);
+  assert.equal(requests.length, beforePreparation);
+  results.push({ name: 'scenario-preparation-pause-stops-events', passed: true });
+  console.log('PASS: pausing scenario preparation stops further interaction and AI requests');
 } catch (error) {
   results.push({ passed: false, error: error instanceof Error ? error.message : String(error) });
   throw error;

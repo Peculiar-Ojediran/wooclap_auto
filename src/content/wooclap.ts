@@ -1,6 +1,7 @@
 import type { CaptureRect, Observation, Question } from '../shared/types.js';
 import { extractStructured } from './structured.js';
 import { ADVANCED_TYPES, extractAdvanced } from './advanced.js';
+import { extractRemaining } from './remaining.js';
 
 export interface LiveQuestion {
   question: Question;
@@ -149,6 +150,8 @@ export function extractWooclap(doc: Document): LiveQuestion | Observation {
     if (structured.question.imageKeys.length) structured.rect = bounds([scope, title, ...meaningfulImages, ...diagrams], doc);
     return structured;
   }
+  const remaining = extractRemaining(scope, title, eventKey, doc);
+  if (remaining) return remaining;
   const advanced = extractAdvanced(scope, title, eventKey, doc);
   if (advanced) return advanced;
   const groups = query(scope, 'ul[aria-labelledby="question-title"][role="radiogroup"], ul[aria-labelledby="question-title"][role="group"]');
