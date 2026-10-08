@@ -14,6 +14,7 @@ if (!host.__wooclapAutoLoaded) {
 function install(): void {
   const documentKey = crypto.randomUUID();
   let runId: string | null = null;
+  let backgroundMode = false;
   let selectors: SelectorConfig = DEFAULT_SETTINGS.selectors;
   let occurrence = 0;
   let candidate = '';
@@ -59,7 +60,7 @@ function install(): void {
     preparing = true;
     try {
       const guard = () => {
-        if (runId !== expectedRun || document.visibilityState !== 'visible') throw new Error('Session paused or tab inactive.');
+        if (runId !== expectedRun || (!backgroundMode && document.visibilityState !== 'visible')) throw new Error('Session paused or tab inactive.');
         if (userRevision !== expectedRevision) throw new Error('You interacted with the page. Question preparation stopped.');
       };
       await prepareStructured(document, guard);
@@ -113,7 +114,7 @@ function install(): void {
     while (preparing && runId === expectedRun && Date.now() < preparationDeadline) await new Promise(resolve => setTimeout(resolve, 25));
     if (preparing) throw new Error('The question options are still loading. Review the page before continuing.');
     const check = () => {
-      if (runId !== expectedRun || document.visibilityState !== 'visible') throw new Error('Session paused or tab inactive.');
+      if (runId !== expectedRun || (!backgroundMode && document.visibilityState !== 'visible')) throw new Error('Session paused or tab inactive.');
       const current = inspect();
       if (!current.question || current.state !== 'question' || occurrence !== pending.occurrence
         || fingerprint(current.question) !== pending.fingerprint) throw new Error('The question changed. The previous answer was discarded.');
@@ -128,7 +129,7 @@ function install(): void {
     applying = true;
     try {
       const result = await selectAnswer(pending.question, pending.answer, selectors, document, () => {
-        if (runId !== expectedRun || document.visibilityState !== 'visible') throw new Error('Session paused or tab inactive.');
+        if (runId !== expectedRun || (!backgroundMode && document.visibilityState !== 'visible')) throw new Error('Session paused or tab inactive.');
         if (userRevision !== initialRevision) throw new Error('You edited the page while the answer was being applied. Automatic submission stopped.');
       });
       if (!result.submittedBySelection) {
@@ -164,6 +165,7 @@ function install(): void {
     if (sender.id !== chrome.runtime.id) return;
     if (message.type === 'MONITOR_START') {
       runId = message.runId;
+      backgroundMode = message.backgroundMode === true;
       selectors = message.selectors;
       lastSent = '';
       candidate = '';
@@ -171,6 +173,7 @@ function install(): void {
       reply({ ok: true, documentKey });
     } else if (message.type === 'MONITOR_STOP') {
       runId = null;
+      backgroundMode = false;
       reply({ ok: true });
     } else if (message.type === 'READ_CURRENT') {
       reply({ ok: true, observation: inspect(), occurrence, documentKey, runId });
@@ -189,8 +192,10 @@ function install(): void {
   }, true);
   setInterval(() => schedule(), 5_000);
   document.addEventListener('visibilitychange', () => {
-    if (runId && document.visibilityState !== 'visible') void send({ type: 'TAB_HIDDEN' });
+    if (runId && !backgroundMode && document.visibilityState !== 'visible') void send({ type: 'TAB_HIDDEN' });
     schedule();
   });
-  window.addEventListener('pagehide', () => { if (runId) void send({ type: 'TAB_HIDDEN' }); });
+  window.addEventListener('pagehide', () => {
+    if (runId) { void send({ type: 'PAGE_DEPARTED' }); runId = null; }
+  });
 }

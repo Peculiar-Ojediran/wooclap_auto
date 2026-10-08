@@ -47,7 +47,8 @@ function render(state: SessionState, settings: Settings): void {
   const phase = element('phase');
   phase.textContent = phaseLabels[state.phase] ?? state.phase;
   phase.dataset.phase = state.phase;
-  element('mode').textContent = (state.running ? state.mode : settings.mode) === 'auto' ? 'Auto-submit mode' : 'Suggestion mode';
+  const answerMode = (state.running ? state.mode : settings.mode) === 'auto' ? 'Auto-submit mode' : 'Suggestion mode';
+  element('mode').textContent = `${answerMode}${settings.backgroundMode ? ' · Background' : ''}`;
   element('session-detail').textContent = state.detail;
   element('request-count').textContent = `${state.requestCount} / ${settings.requestLimit} requests`;
   const bridgeMode = element('bridge-mode');

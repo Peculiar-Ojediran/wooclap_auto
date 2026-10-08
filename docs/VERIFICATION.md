@@ -1,19 +1,33 @@
 # Verification results
 
-Verified on 2026-09-24 using Microsoft Edge on Windows. The extension is built in `dist/edge`.
+Verified on 2026-09-30 using Microsoft Edge on Windows. Earlier paid API checks are dated separately below. The extension is built in `dist/edge`.
 
 ## Current checks
 
 | Check | Result | What it establishes |
 | --- | --- | --- |
-| `npm run check` | Passed: 173 tests, TypeScript, extension build | Legacy and expanded contracts, actual SDK parsing through injected transport, extraction, controlled input updates, validation, cancellation, and popup behavior |
+| `npm run check` | Passed: 193 tests, TypeScript, extension build | Legacy and expanded contracts, actual SDK parsing through injected transport, extraction, controlled input updates, validation, cancellation, and popup behavior |
 | `npm run test:browser` | Passed in Edge; 11 local solver calls | Practice-page suggestions, automatic answers, cache/pause/resume, timer deduplication, closed questions, tab changes, request limits, stale answers, uncertain submissions |
 | `npm run test:images` | Passed in Edge | Toolbar permission, 726 x 569 question crop, image answer, and confirmed submission |
 | `npm run test:wooclap` | Passed in Edge | Choice and sorting participant layouts, asynchronous controls, image capture, repeated occurrences, and model-specific cache invalidation |
 | `npm run test:types` | Passed in Edge; 21 local solver calls | 18 type/layout/zoom cases plus five lifecycle checks; all seven final automatic paths, stale geometry, uncertain receipts, and preparation cancellation |
-| `npm run test:openai:types` (earlier expansion; not rerun for final adapters) | Passed: 3 real requests | Numeric, matching, and image-point responses from `gpt-4.1-mini` using the new strict schemas |
+| `npm run test:background` | Passed in Edge; 9 checks, 7 local solver calls | Inactive-tab/minimized capture and submission, fresh image pixels, idle monitoring, cancellation, connection loss, and tab-setting restoration |
+| `npm run test:openai:types` (earlier expansion; not rerun for background mode) | Passed: 3 real requests | Numeric, matching, and image-point responses from `gpt-4.1-mini` using the new strict schemas |
 
 Normal tests use synthetic responses and never load the API key. The explicit `test:openai:types` command loads local API configuration, makes at most three paid requests, and never retries. It checks the solver directly; the independent Edge replay checks extension-to-bridge interaction with deterministic responses. No new-type live Wooclap vote was submitted during verification. The final seven adapters reuse the existing validated answer schemas; no additional paid requests were made for their implementation.
+
+## Background operation (2026-09-30)
+
+The new replay loads the built extension in an isolated **headless Microsoft Edge 154.0.4258.37** profile, using a local practice page and deterministic solver. It switches the active tab to an unrelated magenta page and sets the browser window state to `minimized` through Edge's window API. This verifies Edge's background/minimized rendering path; it does not claim a separate manual headed-window or live Wooclap test.
+
+- A delayed response and the following question submit with the unrelated tab still active.
+- The solver's cropped screenshot contains the monitored question's blue triangle and zero magenta foreground pixels. After minimizing, the test changes the triangle to red and verifies the new red pixels, proving the frame is current.
+- Monitoring survives 37 seconds without extension-page polling, then answers the next minimized question.
+- Pause cancels a pending request, releases the connection, restores the original tab discard policy, and prevents a duplicate request after resume.
+- A lost capture connection pauses without requesting AI or falling back to a screenshot of the foreground tab. Navigation also stops and cleans up the session. An originally disabled automatic-discard policy remains disabled after cleanup.
+- Unit tests cover browser-triggered debugger cancellation, attachment/setup failures, stale screenshot results after reconnect, startup interrupted by Pause/settings/navigation, and duplicate Start requests.
+
+Sanitized evidence: `test-results/background-replay.json`. No screenshots or request payloads are saved by this replay. Background mode is off by default and still requires an open Edge browser and running local bridge. [Plan, implementation, and browser API sources](BACKGROUND_MODE_PLAN.md).
 
 ## Expanded question types
 

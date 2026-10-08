@@ -70,6 +70,7 @@ export interface Settings {
   mode: 'suggest' | 'auto';
   requestLimit: number;
   captureImages: boolean;
+  backgroundMode: boolean;
   selectors: SelectorConfig;
 }
 export interface CaptureRect {
@@ -108,7 +109,7 @@ export const BRIDGE_URL = 'http://127.0.0.1:4318';
 export const PROTOCOL_VERSION = 2;
 export const DEFAULT_SETTINGS: Settings = {
   bridgeToken: '', model: 'gpt-4.1-mini', mode: 'suggest', requestLimit: 25,
-  captureImages: true,
+  captureImages: true, backgroundMode: false,
   selectors: { question: '', choices: '', submit: '', confirmation: '', multiple: false, choiceClickSubmits: false }
 };
 export const INITIAL_SESSION: SessionState = {

@@ -12,7 +12,7 @@ Build an Edge extension that recognizes a Wooclap participant page, detects a ne
 - Content adapters read visible question content and controls from the DOM. `wooclap.ts` handles choices/sorting and dispatches to `structured.ts` for text/fields, `remaining.ts` for contribution/image/scenario modules, and `advanced.ts` for rating/allocation and preview fallbacks. Observe changes and run a five-second backup check; debounce changes while content loads.
 - An extension service worker owns the session, validates the tab and answers, and calls a local Node.js bridge.
 - The bridge uses the OpenAI Responses API with a strict output schema selected for the answer family, then validates it against the question. The API key stays in a local environment file outside the extension. Bridge protocol 2 preserves legacy unversioned request support and clearly rejects incompatible explicit versions.
-- When a question contains images, capture only its visible region. Pause if needed content is offscreen or if the monitored tab is inactive.
+- When a question contains images, capture only its viewport region. Foreground mode requires an active visible tab. Opt-in background mode uses a tab-specific debugger screenshot and keeps the page rendering while another tab is active or Edge is minimized. Offscreen content still requires adjustment. See [BACKGROUND_MODE_PLAN.md](docs/BACKGROUND_MODE_PLAN.md).
 - Popup controls show status, current answer, request count, and a short activity log. An options page configures the bridge pairing token, model, mode, request limit, and optional DOM selectors.
 
 ## Detection and answer lifecycle
@@ -58,7 +58,7 @@ After updating, rebuild, restart the bridge, reload the extension at `edge://ext
 
 - Timer-only changes do not trigger new requests.
 - Changed/reordered choices invalidate an in-flight answer.
-- A closed question, event change, inactive tab, pause, and expired request cannot cause a stale submission.
+- A closed question, event change, pause, expired request, or lost background connection cannot cause a stale submission. Inactive tabs stop foreground sessions; background sessions intentionally continue.
 - Unknown answers and ambiguous controls produce a review state.
 - Decimal ranges, steps, and allocation totals use exact comparisons; required fields and image-label coverage must be complete.
 - Participant edits invalidate a pending automatic application without changing the question fingerprint.

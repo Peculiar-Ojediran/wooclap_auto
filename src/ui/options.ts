@@ -31,6 +31,7 @@ function populate(settings: Settings): void {
   input('mode-suggest').checked = settings.mode === 'suggest';
   input('request-limit').value = String(settings.requestLimit);
   input('capture-images').checked = settings.captureImages;
+  input('background-mode').checked = settings.backgroundMode === true;
   input('selector-question').value = settings.selectors.question;
   input('selector-choices').value = settings.selectors.choices;
   input('selector-submit').value = settings.selectors.submit;
@@ -44,6 +45,7 @@ function readSettings(): Settings {
     bridgeToken: input('bridge-token').value.trim(), model: input('model').value.trim(),
     mode: input('mode-auto').checked ? 'auto' : 'suggest',
     requestLimit: Number(input('request-limit').value), captureImages: input('capture-images').checked,
+    backgroundMode: input('background-mode').checked,
     selectors: {
       question: input('selector-question').value.trim(), choices: input('selector-choices').value.trim(),
       submit: input('selector-submit').value.trim(), confirmation: input('selector-confirmation').value.trim(),

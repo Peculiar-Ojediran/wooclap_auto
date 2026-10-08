@@ -1,4 +1,5 @@
 import { sourceForUrl } from './content/adapter';
+import { BackgroundTab } from './background-tab';
 import { fingerprint, normalizeSettings, QuestionLedger, validateAnswer, validateAnswerPayload } from './shared/core';
 import { BRIDGE_URL, PROTOCOL_VERSION, DEFAULT_SETTINGS, INITIAL_SESSION, type Settings, type SessionState, type Observation, type PendingAnswer, type CaptureRect, type SolveResponse } from './shared/types';
 
@@ -15,7 +16,10 @@ let pendingKey = '';
 let eventKey = '';
 let submitting = false;
 let startInProgress = false;
+let startingTabId: number | null = null;
 let persistence: Promise<void> = Promise.resolve();
+const backgroundTab = new BackgroundTab();
+let stopping: Promise<void> = Promise.resolve();
 
 const initialized = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
@@ -39,6 +43,9 @@ const initialized = (async () => {
       state.detail = 'The background service restarted. Press Start to resume; previous requests will not be repeated.';
     }
   }
+  // A browser/worker restart never silently resumes a submission. Clean up the
+  // prior session's tab protection while retaining its request ledger.
+  await backgroundTab.recover();
 })();
 
 function persist(): Promise<void> {
@@ -69,8 +76,12 @@ async function pause(detail = 'Paused. Press Start when you are ready.'): Promis
   runId = null;
   state.running = false;
   const tabId = state.tabId;
-  await update('paused', detail);
-  if (tabId !== null) await chrome.tabs.sendMessage(tabId, { type: 'MONITOR_STOP' }).catch(() => undefined);
+  stopping = Promise.all([
+    update('paused', detail),
+    tabId !== null ? chrome.tabs.sendMessage(tabId, { type: 'MONITOR_STOP' }).catch(() => undefined) : Promise.resolve(),
+    backgroundTab.release()
+  ]).then(() => undefined);
+  await stopping;
 }
 
 async function bridge(path: string, body?: object, signal?: AbortSignal): Promise<any> {
@@ -93,16 +104,20 @@ async function bridge(path: string, body?: object, signal?: AbortSignal): Promis
   return result;
 }
 
-async function activeTab(tabId: number): Promise<chrome.tabs.Tab> {
+async function monitoredTab(tabId: number, requireForeground = !settings.backgroundMode): Promise<chrome.tabs.Tab> {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url || !sourceForUrl(tab.url)) throw new Error('Open a Wooclap participant question or the local practice page.');
-  if (!tab.active) throw new Error('Keep the monitored tab active while answering.');
+  if (tab.discarded) throw new Error('The monitored page was unloaded. Return to it and press Start.');
+  if (requireForeground && (!tab.active || (await chrome.windows.get(tab.windowId)).state === 'minimized')) {
+    throw new Error('Keep the monitored tab visible, or enable background mode in Settings.');
+  }
   return tab;
 }
 
 async function readCurrent(): Promise<{ observation: Observation; occurrence: number; documentKey: string; runId: string }> {
   if (state.tabId === null) throw new Error('No tab is selected.');
-  await activeTab(state.tabId);
+  await monitoredTab(state.tabId);
+  if (settings.backgroundMode && !backgroundTab.owns(state.tabId)) throw new Error('The background connection ended. Press Start to reconnect.');
   const result = await chrome.tabs.sendMessage(state.tabId, { type: 'READ_CURRENT' });
   if (!result?.ok) throw new Error('Could not read the question. Refresh the page and press Start.');
   return result;
@@ -113,13 +128,23 @@ function isCurrent(expectedRun: string, expectedGeneration: number): boolean {
 }
 
 async function capture(rect: CaptureRect, tabId: number): Promise<string> {
-  const tab = await activeTab(tabId);
+  const captureRun = runId, captureGeneration = generation;
+  const tab = await monitoredTab(tabId);
+  if (!captureRun || !isCurrent(captureRun, captureGeneration)) throw new Error('Image capture was cancelled.');
   const { x, y, width, height, viewportWidth, viewportHeight } = rect;
   if (![x, y, width, height, viewportWidth, viewportHeight].every(Number.isFinite) || x < 0 || y < 0 || width < 1 || height < 1
     || x + width > viewportWidth + 1 || y + height > viewportHeight + 1) throw new Error('The entire question and its images must be visible. Adjust zoom or scroll, then restart.');
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-  // Capture is active-tab-only. Check again before using any pixels.
-  await activeTab(tabId);
+  let dataUrl: string;
+  if (settings.backgroundMode) {
+    try { dataUrl = await backgroundTab.capture(tabId); }
+    catch (error) {
+      // A timed-out CDP command cannot be canceled with Promise.race. Detach
+      // before allowing another session, and never capture a different tab.
+      if (captureRun && isCurrent(captureRun, captureGeneration)) await pause(error instanceof Error ? error.message : 'Background capture failed.');
+      throw error;
+    }
+  } else dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  await monitoredTab(tabId);
   const encoded = dataUrl.slice(dataUrl.indexOf(',') + 1);
   const pixelBytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
   const bitmap = await createImageBitmap(new Blob([pixelBytes], { type: 'image/png' }));
@@ -139,32 +164,48 @@ async function capture(rect: CaptureRect, tabId: number): Promise<string> {
 
 async function start(tabId: number): Promise<void> {
   if (startInProgress) throw new Error('A session is already starting.');
+  if (state.running) throw new Error('Pause the current session before starting another.');
   startInProgress = true;
+  startingTabId = tabId;
   const startGeneration = generation;
   try {
-    if (state.running) throw new Error('Pause the current session before starting another.');
-    const tab = await activeTab(tabId);
+    await stopping;
+    const stillStarting = () => { if (generation !== startGeneration) throw new Error('Starting was cancelled. Press Start when ready.'); };
+    stillStarting();
+    const tab = await monitoredTab(tabId);
     const health = await bridge('/health');
     if (health.protocolVersion !== PROTOCOL_VERSION) throw new Error('The local bridge needs an update. Restart it with npm start, then reload the extension.');
     if (generation !== startGeneration) throw new Error('Starting was cancelled. Press Start when ready.');
     if (!health.ready) throw new Error('Add OPENAI_API_KEY to .env and restart the local service, or run npm run demo for practice.');
     if (health.demo && sourceForUrl(tab.url!) !== 'practice') throw new Error('The demo service only answers the local practice page. Run npm start for Wooclap.');
+    const latestTab = await monitoredTab(tabId);
+    stillStarting();
+    if (latestTab.url !== tab.url) throw new Error('The page changed while starting. Press Start on the new page.');
     invalidate();
     runId = crypto.randomUUID();
     eventKey = '';
     currentDocument = '';
     state = { ...state, running: true, tabId, mode: settings.mode, pending: null, bridgeMode: health.demo ? 'demo' : 'openai' };
-    await update('waiting', health.demo ? 'Practice mode. Waiting for a supported question.' : 'Watching this tab for a supported question.');
-    const message = { type: 'MONITOR_START', runId, selectors: settings.selectors };
+    const expectedRun = runId, startedGeneration = generation;
+    const guard = () => { if (!isCurrent(expectedRun, startedGeneration)) throw new Error('Starting was cancelled. Press Start when ready.'); };
+    if (settings.backgroundMode) await backgroundTab.acquire(tabId, guard);
+    guard();
+    await update('waiting', settings.backgroundMode ? 'Background mode is watching the selected tab. You can switch tabs or minimize Edge.'
+      : health.demo ? 'Practice mode. Waiting for a supported question.' : 'Watching this tab for a supported question.');
+    guard();
+    const message = { type: 'MONITOR_START', runId, selectors: settings.selectors, backgroundMode: settings.backgroundMode };
     try { await chrome.tabs.sendMessage(tabId, message); }
     catch {
+      guard();
       await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+      guard();
       await chrome.tabs.sendMessage(tabId, message);
     }
+    guard();
   } catch (error) {
     if (state.running) await pause('Could not start monitoring. Refresh the page and try again.');
     throw error;
-  } finally { startInProgress = false; }
+  } finally { startInProgress = false; startingTabId = null; }
 }
 
 async function applyPending(): Promise<void> {
@@ -208,6 +249,7 @@ async function applyPending(): Promise<void> {
 async function solve(observation: Observation, occurrence: number, documentKey: string): Promise<void> {
   const question = observation.question;
   if (!question || !runId || state.tabId === null) return;
+  const solvingTabId = state.tabId;
   if (eventKey && question.eventKey !== eventKey) { await pause('The event changed. Press Start to monitor the new event.'); return; }
   eventKey = question.eventKey;
   const fp = fingerprint(question);
@@ -232,12 +274,14 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
   work = controller;
   try {
     if (state.requestCount >= settings.requestLimit) { await pause('The request limit was reached. Increase it in Settings to continue.'); return; }
-    await activeTab(state.tabId);
+    await monitoredTab(solvingTabId);
+    if (!isCurrent(expectedRun, expectedGeneration)) return;
+    if (settings.backgroundMode && !backgroundTab.owns(solvingTabId)) throw new Error('The background connection ended. Press Start to reconnect.');
     let screenshot: string | undefined;
     if (question.imageKeys.length) {
       if (!settings.captureImages) throw new Error('This question needs its image. Enable image capture in Settings.');
       if (!observation.rect) throw new Error('Could not locate all question images. Review this question manually.');
-      screenshot = await capture(observation.rect, state.tabId);
+      screenshot = await capture(observation.rect, solvingTabId);
     }
     const latest = await readCurrent();
     if (!isCurrent(expectedRun, expectedGeneration) || latest.documentKey !== documentKey || latest.occurrence !== occurrence
@@ -273,7 +317,11 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
 async function handleContent(message: any, sender: chrome.runtime.MessageSender): Promise<object> {
   if (!state.running || sender.tab?.id !== state.tabId || sender.frameId !== 0 || message.runId !== runId) return { ok: true, stop: true };
   if (!sender.url || !sourceForUrl(sender.url)) return { ok: false, stop: true };
-  if (message.type === 'TAB_HIDDEN') { await pause('The monitored tab became inactive. Return to it and press Start.'); return { ok: true }; }
+  if (message.type === 'PAGE_DEPARTED') { await pause('The monitored page was left. Press Start on the new page.'); return { ok: true }; }
+  if (message.type === 'TAB_HIDDEN') {
+    if (!settings.backgroundMode) await pause('The monitored tab became inactive. Return to it and press Start.');
+    return { ok: true };
+  }
   if (message.type === 'CONTENT_DIRTY') {
     if (!submitting) { invalidate(); await update('waiting', 'The page changed. Waiting for the question to settle.'); }
     return { ok: true };
@@ -302,7 +350,7 @@ async function handle(message: any, sender: chrome.runtime.MessageSender): Promi
     case 'CHECK_BRIDGE': return { ok: true, health: await bridge('/health') };
     case 'SAVE_SETTINGS': {
       const next = normalizeSettings(message.settings);
-      if (state.running) await pause('Settings changed. Press Start to apply them.');
+      if (state.running || startInProgress) await pause('Settings changed. Press Start to apply them.');
       settings = next;
       state.mode = settings.mode;
       await chrome.storage.local.set({ settings });
@@ -332,14 +380,24 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   void handle(message, sender).then(reply).catch(error => reply({ ok: false, error: error instanceof Error ? error.message : 'Extension request failed.' }));
   return true;
 });
-chrome.tabs.onRemoved.addListener(tabId => { void initialized.then(() => { if (state.tabId === tabId && state.running) return pause('The monitored tab was closed.'); }); });
+chrome.tabs.onRemoved.addListener(tabId => { void initialized.then(() => {
+  if ((state.tabId === tabId && state.running) || startingTabId === tabId) return pause('The monitored tab was closed.');
+}); });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
-  if (change.status === 'loading') void initialized.then(() => { if (state.tabId === tabId && state.running) return pause('The page navigated. Press Start on the new question page.'); });
+  if (change.status === 'loading' || change.discarded) void initialized.then(() => {
+    if ((state.tabId === tabId && state.running) || startingTabId === tabId) return pause('The page navigated or was unloaded. Press Start on the new question page.');
+  });
 });
 chrome.tabs.onActivated.addListener(info => {
   void initialized.then(async () => {
-    if (!state.running || state.tabId === null || info.tabId === state.tabId) return;
+    if (!state.running || settings.backgroundMode || state.tabId === null || info.tabId === state.tabId) return;
     const tab = await chrome.tabs.get(state.tabId).catch(() => null);
     if (!tab || tab.windowId === info.windowId) await pause('The monitored tab became inactive. Return to it and press Start.');
   });
+});
+chrome.debugger.onDetach.addListener(source => {
+  if (source.tabId !== undefined && backgroundTab.handleDetach(source.tabId)) {
+    // pause invalidates pending work synchronously, before any cleanup awaits.
+    void pause('The background connection was closed. Close DevTools if needed, then press Start to reconnect.');
+  }
 });

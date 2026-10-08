@@ -170,6 +170,8 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
   settings.requestLimit = Number(settings.requestLimit);
   if (!Number.isInteger(settings.requestLimit) || settings.requestLimit < 1 || settings.requestLimit > 100) throw new Error('Request limit must be between 1 and 100.');
   settings.captureImages = Boolean(settings.captureImages);
+  // Background attachment must be explicitly enabled, including for old settings.
+  settings.backgroundMode = settings.backgroundMode === true;
   for (const key of ['question', 'choices', 'submit', 'confirmation'] as const) {
     if (typeof settings.selectors[key] !== 'string' || settings.selectors[key].length > 500) throw new Error('Selectors must be shorter than 500 characters.');
     settings.selectors[key] = settings.selectors[key].trim();

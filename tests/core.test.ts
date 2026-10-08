@@ -29,3 +29,13 @@ test('settings bounds and mutually exclusive selection semantics are enforced', 
   assert.throws(() => normalizeSettings({ model: 'bad model' }));
   assert.equal(normalizeSettings({}).mode, 'suggest');
 });
+
+test('background mode is an explicit opt-in and existing settings keep foreground behavior', () => {
+  assert.equal(normalizeSettings({}).backgroundMode, false);
+  assert.equal(normalizeSettings({ mode: 'auto', captureImages: true }).backgroundMode, false);
+  assert.equal(normalizeSettings({ backgroundMode: true }).backgroundMode, true);
+  assert.equal(normalizeSettings({ backgroundMode: false }).backgroundMode, false);
+  for (const value of [undefined, null, 'true', 'false', 1]) {
+    assert.equal(normalizeSettings({ backgroundMode: value as unknown as boolean }).backgroundMode, false);
+  }
+});

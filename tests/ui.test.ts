@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
-import { DEFAULT_SETTINGS, INITIAL_SESSION, type SessionState } from '../src/shared/types';
+import { DEFAULT_SETTINGS, INITIAL_SESSION, type SessionState, type Settings } from '../src/shared/types';
 
 type Message = { type: string; [key: string]: unknown };
 const bundles = new Map<string, Promise<string>>();
@@ -112,6 +112,73 @@ test('bridge health reports key configuration without claiming verified OpenAI a
     assert.match(ui.element('bridge-status').textContent!, /API key configured/);
     assert.match(ui.element('bridge-status').textContent!, /checked when answering/);
     assert.doesNotMatch(ui.element('bridge-status').textContent!, /AI ready|verified/i);
+  } finally { ui.dom.window.close(); }
+});
+
+test('background settings migrate unchecked, persist explicit changes, and survive reopening options', async () => {
+  const { backgroundMode: _backgroundMode, ...legacy } = DEFAULT_SETTINGS;
+  let stored: Partial<Settings> = { ...legacy, selectors: { ...legacy.selectors } };
+  const messages: Message[] = [];
+  const handler = async (message: Message) => {
+    messages.push(message);
+    if (message.type === 'SAVE_SETTINGS') stored = message.settings as Settings;
+    return { ok: true, settings: stored };
+  };
+  const initial = await loadUI('options', handler);
+  try {
+    const input = initial.element<HTMLInputElement>('background-mode');
+    assert.equal(input.checked, false);
+    input.checked = true;
+    input.dispatchEvent(new initial.dom.window.Event('input', { bubbles: true }));
+    assert.equal(initial.element('save-status').dataset.state, 'unsaved');
+    initial.element<HTMLButtonElement>('save-settings').click();
+    await flush();
+    assert.equal(stored.backgroundMode, true);
+    assert.equal(initial.element('save-status').dataset.state, 'success');
+    assert.equal(stored.captureImages, true);
+  } finally { initial.dom.window.close(); }
+
+  const reopened = await loadUI('options', handler);
+  try {
+    const input = reopened.element<HTMLInputElement>('background-mode');
+    assert.equal(input.checked, true);
+    assert.match(reopened.element('background-help').textContent!, /debugging banner/);
+    input.checked = false;
+    reopened.element<HTMLButtonElement>('check-bridge').click();
+    await flush();
+    assert.equal(stored.backgroundMode, false);
+    assert.equal(messages.at(-2)?.type, 'SAVE_SETTINGS');
+    assert.equal(messages.at(-1)?.type, 'CHECK_BRIDGE');
+  } finally { reopened.dom.window.close(); }
+});
+
+test('options report a rejected background setting without claiming that it was saved', async () => {
+  const ui = await loadUI('options', async message => message.type === 'SAVE_SETTINGS'
+    ? { ok: false, error: 'Reload the extension to grant the debugger permission.' }
+    : { ok: true, settings: DEFAULT_SETTINGS });
+  try {
+    const input = ui.element<HTMLInputElement>('background-mode');
+    input.checked = true;
+    input.dispatchEvent(new ui.dom.window.Event('input', { bubbles: true }));
+    ui.element<HTMLButtonElement>('save-settings').click();
+    await flush();
+    assert.equal(ui.element('error-message').hidden, false);
+    assert.match(ui.element('error-message').textContent!, /debugger permission/);
+    assert.equal(ui.element('save-status').dataset.state, 'unsaved');
+    assert.equal(ui.element<HTMLButtonElement>('save-settings').disabled, false);
+  } finally { ui.dom.window.close(); }
+});
+
+test('popup identifies background mode and directs approval to the monitored session', async () => {
+  let settings = { ...DEFAULT_SETTINGS, backgroundMode: true };
+  const ui = await loadUI('popup', async () => ({ ok: true, state: INITIAL_SESSION, settings }));
+  try {
+    assert.match(ui.element('mode').textContent!, /Suggestion mode.*Background/);
+    assert.match(ui.element('approve-button').title, /monitored session tab/);
+    settings = { ...settings, backgroundMode: false };
+    ui.poll();
+    await flush();
+    assert.equal(ui.element('mode').textContent, 'Suggestion mode');
   } finally { ui.dom.window.close(); }
 });
 

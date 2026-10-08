@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "tsx scripts/browser-smoke.ts",
+    "test:background": "tsx scripts/background-smoke.ts",
     "test:images": "tsx scripts/capture-smoke.ts",
     "test:openai": "tsx --env-file-if-exists=.env scripts/openai-smoke.ts",
     "test:wooclap": "tsx scripts/wooclap-replay-smoke.ts",

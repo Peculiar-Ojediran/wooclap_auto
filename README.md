@@ -6,7 +6,7 @@ Includes a **local practice page and a demo solver that needs no API key**, plus
 
 ## Try the local version
 
-Use Microsoft Edge and **Node.js 24 or newer**. Open PowerShell in this project folder.
+Use **Microsoft Edge 118 or newer** and **Node.js 24 or newer**. Open PowerShell in this project folder.
 
 1. Install dependencies, check the project, and build the extension:
 
@@ -44,6 +44,16 @@ Demo answers are fixed answers for the bundled practice questions. They exercise
 After rebuilding, choose **Reload** for the extension at `edge://extensions` and refresh the practice or participant page. A reloaded extension requires you to start the session again.
 
 **Upgrading to the expanded question types:** stop the previous bridge with **Ctrl+C**, run `npm run build`, restart it with `npm start` (or `npm run demo`), reload the extension, then refresh the participant page. The new extension requires **bridge protocol 2** and reports a version mismatch if an old bridge is still running. The bridge continues accepting legacy requests without an explicit protocol version; existing pairing tokens and API configuration remain usable.
+
+## Answer while using other tabs or minimizing Edge
+
+1. Rebuild with `npm run build`, reload the extension at `edge://extensions`, and refresh the Wooclap page. Accept the updated debugger permission if Edge asks.
+2. Open extension **Settings**, enable **Keep answering in the background**, and save. Select **Submit automatically** if you want answers submitted without approval.
+3. Start the session on your Wooclap tab. You can then switch tabs or minimize Edge. Suggestion mode continues preparing answers but waits for **Approve & submit** in the popup, which can be opened from another tab.
+
+Background mode captures only the monitored tab, including visual questions, and leaves your active tab and minimized window unchanged. Keep the whole question within that tab's viewport by adjusting zoom/scroll before leaving it. The debugger connection keeps the page rendering and the extension worker running; Edge displays a debugging banner while connected. Close DevTools for the monitored tab. **Pause** releases the connection and restores its previous automatic-discard setting.
+
+Background mode defaults off. With it off, switching away still pauses the session. Keep Edge and the local bridge running: this does not run while the browser is closed or the computer sleeps. Navigation, a closed question, lost connection, or uncertain submission still stops answering. See the [background-mode plan](docs/BACKGROUND_MODE_PLAN.md) and [verification evidence](docs/VERIFICATION.md).
 
 ## Use the OpenAI API
 
@@ -94,7 +104,7 @@ Presentation activities (Audio / Video, Slide, Timer, Spin the wheel) are waitin
 
 - The adapters recognize participant event aliases, closed voting, meaningful images, and positive submission feedback. Their observed contracts are documented in [compatibility evidence](docs/WOOCLAP_COMPATIBILITY.md). A separate generic adapter supports the local practice page.
 - **Advanced page selectors** can specify the visible question, choice controls, submit button, and submission confirmation. Leave them empty for the practice page. Configure them after inspecting a real layout, and test in suggestion mode first. The immediate-submit option is only for single-choice layouts where clicking a choice submits it.
-- Images trigger a cropped capture of the visible question region when image capture is enabled. Keep the monitored tab active and the entire question and its choices visible. Switching tabs or hiding needed content prevents capture/submission. Browser background throttling means the five-second backup check has no exact timing guarantee in inactive tabs or sleeping windows.
+- Images trigger a cropped capture of the question region when image capture is enabled. The complete question must fit its tab viewport. Background mode captures that tab directly while you use another tab or minimize Edge; foreground mode requires keeping it visible. The five-second backup check is best effort and cannot run while the computer sleeps.
 - Each session binds to one tab and event. Changed or closed questions invalidate pending answers. Participant edits while an answer is pending stop its automatic application. Before submitting, the extension rechecks question identity and current controls, attempts submission once, and looks for confirmation; uncertain results require review. Open-ended activities remain limited to one contribution per question appearance even if the form stays open.
 - Pausing preserves a completed suggestion so it can be restored without another request. Cached answers are specific to the provider and selected model. An interrupted AI request is not automatically retried for the same question occurrence; it may already have incurred usage. The next question can proceed normally.
 - The service distinguishes invalid credentials, quota/rate limits, unsupported models, timeouts, refused/incomplete answers, and invalid answer payloads. It validates the appropriate answer family on both sides of the bridge. Errors never trigger an automatic retry or demo fallback. Review answers retain their explanation but cannot be submitted automatically.
@@ -112,6 +122,7 @@ npm run test:browser
 npm run test:images
 npm run test:wooclap
 npm run test:types
+npm run test:background
 ```
 
 Stop the demo/API service before running browser tests: they start an isolated test bridge on port `4318`. The browser smoke test exercises the loaded extension with the local practice page. It tries Microsoft Edge first, then bundled Chromium. If Chromium is missing, install it with `npx playwright install chromium`. The image test specifically requires installed Microsoft Edge and exercises its toolbar action to grant screenshot access. Tests use temporary browser profiles, leaving your normal Edge profile untouched.
@@ -132,7 +143,7 @@ npm run test:openai:types
 | --- | --- |
 | `PLAN.md` | Implementation plan and acceptance checks |
 | `extension/` | Manifest, popup/settings markup, and styles |
-| `src/background.ts` | Session state, local-service requests, and submission coordination |
+| `src/background.ts`, `src/background-tab.ts` | Session coordination, optional background operation, and tab-specific capture |
 | `src/content/` | Question extraction, change detection, and page interaction |
 | `src/ui/` and `src/shared/` | Popup/settings behavior and shared contracts |
 | `server/` | Local bridge, AI/demo solvers, and practice page |
