@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings · Wooclap Auto</title>
+    <link rel="stylesheet" href="ui.css">
+    <script type="module" src="options.js"></script>
+  </head>
+  <body class="options-body">
+    <main class="options-shell">
+      <header class="options-header"><div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">WOOCLAP AUTO</p><h1>Your answer workflow.</h1></div></div><span class="platform-label">Microsoft Edge</span></header>
+      <p class="page-intro">Connect your local bridge, choose how answers are handled, and start with a practice question.</p>
+
+      <form id="settings-form">
+        <section class="settings-card" aria-labelledby="connection-title">
+          <div class="section-heading"><span class="section-number">01</span><div><h2 id="connection-title">Connect the bridge</h2><p>The local service makes AI requests on your computer.</p></div></div>
+          <div class="setup-note"><strong>First time here?</strong><p>Run <code>npm run demo</code> for the local practice page with demo answers, or <code>npm start</code> to use the AI service. Copy the pairing token from <code>.local/bridge-token.txt</code> into the field below.</p></div>
+          <label for="bridge-token">Bridge pairing token</label><input id="bridge-token" name="bridgeToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your local pairing token" aria-describedby="token-help"><p id="token-help" class="field-help">This pairs the extension with your local service. Your API key stays in the backend’s environment settings.</p>
+          <div class="connection-row"><button id="check-bridge" class="button button-secondary" type="button">Save &amp; check connection</button><p id="bridge-status" class="connection-status" role="status">Connection not checked.</p></div>
+          <p class="field-help">This checks the local bridge and whether an API key is configured. An actual answer request verifies access to OpenAI.</p>
+        </section>
+
+        <section class="settings-card" aria-labelledby="answers-title">
+          <div class="section-heading"><span class="section-number">02</span><div><h2 id="answers-title">Set your answering style</h2><p>Start with suggestions to check the results yourself.</p></div></div>
+          <fieldset class="mode-fieldset"><legend>Answer mode</legend><div class="mode-grid"><label class="mode-option"><input id="mode-suggest" name="mode" type="radio" value="suggest" checked><span><strong>Suggest answers</strong><small>Review each answer, then approve it.</small></span></label><label class="mode-option"><input id="mode-auto" name="mode" type="radio" value="auto"><span><strong>Submit automatically</strong><small>Send valid answers while the session runs.</small></span></label></div></fieldset>
+          <div class="field-grid"><div><label for="model">OpenAI model</label><input id="model" name="model" type="text" value="gpt-4.1-mini" required maxlength="100" spellcheck="false" autocomplete="off"><p class="field-help">Use a model available to your API account.</p></div><div><label for="request-limit">Requests per session</label><input id="request-limit" name="requestLimit" type="number" min="1" max="100" step="1" value="25" required><p class="field-help">The session pauses when it reaches this limit.</p></div></div>
+          <label class="checkbox-row"><input id="capture-images" name="captureImages" type="checkbox" checked><span><strong>Include screenshots for visual questions</strong><small>Capture the question area when it contains images. Keep the event tab active unless background mode is enabled.</small></span></label>
+          <label class="checkbox-row"><input id="background-mode" name="backgroundMode" type="checkbox" aria-describedby="background-help"><span><strong>Keep answering in the background</strong><small>Continue in other tabs or with the Edge window minimized.</small></span></label>
+          <p id="background-help" class="field-help">Uses Edge's debugger connection to capture only the monitored tab. Edge shows a debugging banner while the session runs. Close DevTools for that tab, and keep Edge and your local bridge running.</p>
+        </section>
+
+        <details class="settings-card advanced-card"><summary><span><strong>Advanced page selectors</strong><small>For a Wooclap layout that needs manual configuration.</small></span><span class="details-arrow" aria-hidden="true">⌄</span></summary><div class="advanced-content"><p class="field-help">Leave these empty to use automatic detection. The local practice page has built-in support. Set selectors only after checking the page structure; matching the wrong controls can select the wrong answer.</p><label for="selector-question">Question container</label><input id="selector-question" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-choices">Answer choices</label><input id="selector-choices" type="text" placeholder="CSS selector matching each choice" autocomplete="off" spellcheck="false"><label for="selector-submit">Submit button</label><input id="selector-submit" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-confirmation">Submission confirmation</label><input id="selector-confirmation" type="text" placeholder="CSS selector visible after submission" autocomplete="off" spellcheck="false"><label class="checkbox-row"><input id="selector-multiple" type="checkbox"><span><strong>These questions allow multiple answers</strong><small>Use this only when the configured layout supports multiple selections.</small></span></label><label class="checkbox-row"><input id="selector-choice-submits" type="checkbox"><span><strong>Clicking a choice immediately submits the answer</strong><small>Enable only for single-answer layouts that submit without a separate button.</small></span></label></div></details>
+
+        <div class="save-row"><p id="save-status" role="status" class="save-status">Settings are stored in this browser.</p><button id="save-settings" class="button button-primary" type="submit">Save settings <span aria-hidden="true">→</span></button></div>
+        <p id="error-message" class="notice notice-error" role="alert" hidden></p>
+      </form>
+      <footer class="options-footer"><span>Wooclap Auto · Local development</span><a href="http://127.0.0.1:4318/practice" target="_blank" rel="noreferrer">Open practice page ↗</a></footer>
+    </main>
+  </body>
+</html>
