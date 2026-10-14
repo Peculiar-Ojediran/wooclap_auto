@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.local/
+test-results/
+*.log
+nvapi-*
+# Hosted service secrets and generated bundles
+hosted/.dev.vars
+hosted/.dev.vars.*
+hosted/.wrangler/
+hosted/build/

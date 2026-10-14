@@ -1,0 +1,3 @@
+Wooclap local bridge: http://127.0.0.1:4318 (OpenAI / Claude mode)
+Practice page: http://127.0.0.1:4318/practice
+Pair the extension using the token in C:\Users\User\OneDrive\Documents\wooclap_auto\.local\bridge-token.txt

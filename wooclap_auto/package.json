@@ -1,0 +1,40 @@
+{
+  "name": "wooclap-auto-edge",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:browser": "tsx scripts/browser-smoke.ts",
+    "test:background": "tsx scripts/background-smoke.ts",
+    "test:credentials": "tsx scripts/credentials-smoke.ts",
+    "test:standalone": "tsx scripts/standalone-smoke.ts",
+    "test:images": "tsx scripts/capture-smoke.ts",
+    "test:openai": "tsx --env-file-if-exists=.env scripts/openai-smoke.ts",
+    "test:wooclap": "tsx scripts/wooclap-replay-smoke.ts",
+    "test:openai:browser": "tsx --env-file-if-exists=.env scripts/wooclap-replay-smoke.ts --real",
+    "check": "npm run typecheck && npm test && npm run build",
+    "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "demo": "tsx --env-file-if-exists=.env server/index.ts --demo",
+    "test:types": "tsx scripts/types-smoke.ts",
+    "test:openai:types": "tsx --env-file-if-exists=.env scripts/openai-types-smoke.ts",
+    "test:hosted": "tsx scripts/standalone-smoke.ts --hosted",
+    "test:hosted:runtime": "npm run test:runtime --prefix hosted"
+  },
+  "dependencies": {
+    "openai": "^6.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "@types/jsdom": "^21.1.0",
+    "playwright": "^1.55.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

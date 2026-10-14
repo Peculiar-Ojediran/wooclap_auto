@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wooclap Auto</title>
+    <link rel="stylesheet" href="ui.css">
+    <script type="module" src="popup.js"></script>
+  </head>
+  <body class="popup-body">
+    <main class="popup-shell">
+      <header class="brand-row">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">EDGE EXTENSION</p><h1>Wooclap Auto</h1></div></div>
+        <button id="settings-button" class="icon-button" title="Open settings" aria-label="Open settings"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/></svg></button>
+      </header>
+
+      <section class="status-card" aria-label="Session status">
+        <div class="status-top"><span id="phase" class="status-pill" data-phase="idle">Ready to begin</span><span id="mode" class="mode-label">Suggestion mode</span></div>
+        <p id="bridge-mode" class="bridge-mode" hidden></p>
+        <p id="session-detail" class="status-description" aria-live="polite">Open a Wooclap question or the practice page to begin.</p>
+        <div class="session-metrics"><span><span class="metric-dot" aria-hidden="true"></span>Checks every 5 seconds</span><span id="request-count">0 / 25 requests</span></div>
+      </section>
+
+      <div class="main-actions"><button id="start-button" class="button button-primary" disabled>Start on this tab <span aria-hidden="true">↗</span></button><button id="pause-button" class="button button-secondary" disabled>Pause</button></div>
+      <p id="error-message" class="notice notice-error" role="alert" hidden></p>
+
+      <section id="answer-card" class="answer-card" aria-labelledby="question-label" hidden>
+        <div class="card-heading"><h2 id="question-label" class="eyebrow">CURRENT QUESTION</h2><span id="demo-badge" class="mini-badge" hidden>DEMO ANSWER</span></div>
+        <p id="question-text" class="question-text"></p>
+        <ul id="answer-choices" class="answer-choices" aria-label="Proposed choices"></ul>
+        <p id="answer-explanation" class="answer-explanation"></p>
+        <p id="review-note" class="review-note" hidden>This answer needs review. Answer on the page yourself, or skip this question.</p>
+        <div id="suggestion-actions" class="suggestion-actions"><button id="approve-button" class="button button-primary" title="Submit this answer to the monitored session tab">Approve &amp; submit</button><button id="skip-button" class="button button-quiet">Skip</button></div>
+      </section>
+
+      <section id="empty-state" class="empty-state" aria-label="Getting started"><span class="empty-glyph" aria-hidden="true">?</span><div><h2>Ready when the question is.</h2><p>Start a session to detect questions and prepare an answer.</p></div></section>
+
+      <section id="response-metadata" class="response-metadata" aria-labelledby="response-heading" hidden><div class="card-heading"><h2 id="response-heading" class="eyebrow">LATEST RESPONSE</h2><span id="response-source" class="response-source"></span></div><p id="response-model" class="response-model"></p><div class="response-stats"><span id="response-latency"></span><span id="response-tokens"></span></div></section>
+
+      <section class="activity-section" aria-label="Latest activity"><h2 class="eyebrow">LATEST ACTIVITY</h2><p id="last-log" class="activity-text">No activity yet.</p></section>
+      <footer class="popup-footer"><button id="practice-button" class="text-button">Open practice page <span aria-hidden="true">↗</span></button><span id="connection-label">Direct API</span></footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wooclap-shared-nvidia",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "ENABLED": "false",
+    "ALLOWED_EXTENSION_IDS": "moikjafognlalmecmnpplapgponcnhfn",
+    "DAILY_REQUEST_LIMIT": "100",
+    "DAILY_INPUT_BYTES": "20971520",
+    "IP_REQUESTS_PER_MINUTE": "6",
+    "IP_REQUESTS_PER_DAY": "30",
+    "MAX_CONCURRENT_REQUESTS": "2"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SHARED_BUDGET",
+        "class_name": "SharedBudget"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SharedBudget"
+      ]
+    }
+  ]
+}

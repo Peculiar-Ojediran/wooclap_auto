@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wooclap Auto · Local practice</title>
+  <style>
+    :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; color: #193b38; background: #f5f7f3; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, select, input { font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid #fb923c; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    .topbar { padding: 22px max(24px, calc((100vw - 1080px) / 2)); display: flex; justify-content: space-between; align-items: center; background: #fff; border-bottom: 1px solid #dce6df; gap: 16px; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; }
+    .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: white; background: #1c7266; font-size: 20px; }
+    .badge { border-radius: 100px; font-size: 12px; font-weight: 700; padding: 7px 11px; color: #1c7266; background: #e6f4e9; letter-spacing: .03em; }
+    main { max-width: 1080px; margin: 36px auto; padding: 0 24px; }
+    .intro h1 { font-size: clamp(28px, 4vw, 42px); letter-spacing: -.04em; margin: 8px 0; }
+    .intro p { color: #657c73; line-height: 1.6; max-width: 740px; margin: 0 0 24px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; align-items: start; }
+    .question-card, .controls { border-radius: 20px; background: #fff; border: 1px solid #dce6df; }
+    .question-card { overflow: hidden; box-shadow: 0 16px 48px #16493d0b; }
+    .card-top { display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; border-bottom: 1px solid #edf1ed; gap: 12px; }
+    .eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: #657c73; }
+    .timer { display: flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; color: #657c73; }
+    .timer::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #4b9e6c; }
+    form { padding: 28px; }
+    h2 { font-size: 26px; line-height: 1.3; letter-spacing: -.025em; margin: 0 0 12px; }
+    .hint { font-size: 13px; color: #657c73; margin: 0 0 24px; }
+    .choices { display: grid; gap: 10px; }
+    .choice { border: 1px solid #dce6df; border-radius: 12px; padding: 15px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+    .choice:hover { border-color: #45917d; background: #f5faf6; }
+    .choice:has(input:checked) { border-color: #1c7266; background: #ebf5ee; }
+    .choice input { width: 18px; height: 18px; accent-color: #1c7266; margin: 0; flex: 0 0 auto; }
+    .choice span { font-size: 16px; }
+    .primary { border: 0; background: #1c7266; color: #fff; border-radius: 10px; padding: 13px 20px; font-weight: 700; }
+    .primary:hover { background: #155a50; }
+    .submit { margin-top: 22px; width: 100%; }
+    .primary:disabled { opacity: .55; cursor: default; }
+    .visual { display: block; width: 180px; height: 130px; object-fit: contain; margin: 0 auto 20px; }
+    .controls { padding: 22px; }
+    .controls h3 { margin: 0 0 10px; font-size: 17px; }
+    .controls p { font-size: 13px; color: #657c73; line-height: 1.6; margin: 0 0 18px; }
+    .controls label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
+    select { border: 1px solid #c9d8cf; background: #fff; color: #193b38; border-radius: 8px; width: 100%; padding: 10px; margin-bottom: 12px; }
+    .secondary { width: 100%; border: 1px solid #c9d8cf; background: #fff; color: #193b38; padding: 10px; border-radius: 8px; margin-top: 8px; font-size: 13px; font-weight: 650; }
+    .secondary:hover { background: #f0f6f1; }
+    .controls .primary { width: 100%; font-size: 13px; }
+    .stats { display: flex; align-items: center; justify-content: space-between; padding-top: 18px; margin-top: 20px; border-top: 1px solid #edf1ed; font-size: 12px; color: #657c73; }
+    .stats strong { color: #193b38; font-size: 22px; }
+    .result, .waiting { padding: 48px 28px; text-align: center; }
+    .result-icon { display: inline-grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #e6f4e9; color: #1c7266; font-size: 26px; margin-bottom: 20px; }
+    .result p, .waiting p { color: #657c73; line-height: 1.6; }
+    .note { padding: 16px 0; font-size: 12px; line-height: 1.7; color: #657c73; }
+    .error { color: #9f392c; font-size: 13px; min-height: 16px; margin: 12px 0 0; }
+    @media (max-width: 760px) { main { margin-top: 24px; } .layout { grid-template-columns: 1fr; } form, .card-top { padding: 22px; } .badge { white-space: nowrap; } .brand { font-size: 14px; } }
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true">w</span> Wooclap Auto</div><span class="badge">LOCAL PRACTICE</span></header>
+  <main>
+    <section class="intro"><div class="eyebrow">A space to try it out</div><h1>Put your extension to the test.</h1><p>Choose Local practice demo in extension Settings, then open the popup on this page and start a session. Try these sample questions without an API key or local service.</p></section>
+    <div class="layout">
+      <section class="question-card" aria-label="Practice participant view">
+        <div class="card-top"><span class="eyebrow" id="question-kind">Single answer</span><span class="timer">Page timer <span id="timer">00:00</span></span></div>
+        <div id="question-mount"></div>
+        <div class="result" data-wooclap-confirmation role="status" hidden><div class="result-icon" aria-hidden="true">✓</div><h2>Answer submitted.</h2><p id="submitted-detail"></p><p>Choose another question to continue.</p></div>
+        <div class="waiting" data-wooclap-waiting hidden><div class="result-icon" aria-hidden="true">…</div><h2>Waiting for a question</h2><p>Use “Show question” to open the selected sample.</p></div>
+      </section>
+      <aside class="controls"><h3>Practice controls</h3><p>Switch questions, repeat one, or test the waiting screen. The timer changes every second without creating a new question.</p><label for="question-picker">Question type</label><select id="question-picker"><option value="0">1 · Multiple choice</option><option value="1">2 · Multiple answers</option><option value="2">3 · True or false</option><option value="3">4 · Image question</option></select><button type="button" class="primary" id="show-question">Show question</button><button type="button" class="secondary" id="next-question">Next question →</button><button type="button" class="secondary" id="repeat-question">Repeat current question</button><button type="button" class="secondary" id="show-waiting">Show waiting screen</button><div class="stats"><span>Answers submitted</span><strong id="submission-count">0</strong></div></aside>
+    </div>
+    <p class="note">Local practice demo uses known sample answers without calling an AI. Select Direct API to try your own OpenAI or Claude key instead; API answers may incur usage charges.</p>
+  </main>
+  <script src="practice.js"></script>
+<script src="content.js"></script>
+</body>
+</html>
