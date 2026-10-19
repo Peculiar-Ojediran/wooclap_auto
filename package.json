@@ -21,7 +21,8 @@
     "test:types": "tsx scripts/types-smoke.ts",
     "test:openai:types": "tsx --env-file-if-exists=.env scripts/openai-types-smoke.ts",
     "test:hosted": "tsx scripts/standalone-smoke.ts --hosted",
-    "test:hosted:runtime": "npm run test:runtime --prefix hosted"
+    "test:hosted:runtime": "npm run test:runtime --prefix hosted",
+    "test:schedules": "tsx scripts/schedule-smoke.ts"
   },
   "dependencies": {
     "openai": "^6.0.0",

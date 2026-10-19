@@ -1,5 +1,6 @@
 import { BRIDGE_URL, DEFAULT_SETTINGS, PROVIDER_LABELS, PROVIDER_MODELS, type ConnectionMode, type Provider, type ResponseTransport, type Settings } from '../shared/types';
 import { HOSTED_FALLBACK_URL } from '../shared/hosted-config';
+import { scheduleUrl as validateScheduleUrl, type ScheduledSession } from '../shared/schedules';
 
 type Credentials = Record<Provider, { configured: boolean; storage: 'session' | 'local' | 'none' }>;
 interface Response {
@@ -7,6 +8,7 @@ interface Response {
   error?: string;
   settings?: Settings;
   credentials?: Credentials;
+  schedules?: ScheduledSession[];
   health?: { ready: boolean; demo: boolean; model: string; provider?: Provider; connectionMode?: ResponseTransport; acceptsClientKeys?: boolean; detail?: string };
 }
 
@@ -245,3 +247,187 @@ void send({ type: 'GET_STATE' }).then(response => {
   initialized = true;
   acceptCredentials(response);
 }).catch(showError);
+
+// Scheduling has its own form and status: refreshing sessions must never reset
+// a partially completed event or save unrelated provider/key settings.
+const scheduleForm = element<HTMLFormElement>('schedule-form');
+const scheduleActionStatus = element('schedule-action-status');
+const scheduleLoadStatus = element('schedule-load-status');
+const scheduleList = element<HTMLUListElement>('schedule-list');
+const scheduleStatuses: Record<ScheduledSession['status'], string> = {
+  pending: 'Scheduled', starting: 'Starting', running: 'Running', completed: 'Completed',
+  cancelled: 'Cancelled', missed: 'Missed', failed: 'Needs attention'
+};
+const sessionDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+let scheduleBusy = false;
+let scheduleInitialized = false;
+let schedulePolling = false;
+let scheduleSequence = 0;
+let scheduleListKey = '';
+
+function localDateInput(date: Date): string {
+  const part = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+
+function scheduleUrl(value: string): URL {
+  return new URL(validateScheduleUrl(value.trim()));
+}
+
+function updateScheduleControls(): void {
+  element<HTMLButtonElement>('add-schedule').disabled = scheduleBusy || !scheduleInitialized;
+  element<HTMLButtonElement>('refresh-schedules').disabled = scheduleBusy || schedulePolling;
+  for (const button of scheduleList.querySelectorAll<HTMLButtonElement>('button')) button.disabled = scheduleBusy;
+}
+
+function updateSchedulePreview(): void {
+  const startsAt = new Date(input('schedule-start').value).getTime();
+  const duration = Number(input('schedule-duration').value);
+  const preview = element('schedule-window-preview');
+  preview.textContent = Number.isFinite(startsAt) && Number.isInteger(duration) && duration >= 1 && duration <= 480
+    ? `The event tab closes at ${sessionDate.format(new Date(startsAt + duration * 60_000))}.` : '';
+}
+
+function renderSchedules(schedules: ScheduledSession[]): void {
+  scheduleInitialized = true;
+  scheduleLoadStatus.textContent = '';
+  const key = JSON.stringify(schedules);
+  // Retain keyboard focus on a schedule control when a poll changes nothing.
+  if (key !== scheduleListKey) {
+    scheduleListKey = key;
+    const items = schedules.map(schedule => {
+      const item = document.createElement('li');
+      item.className = 'schedule-item';
+      const heading = document.createElement('div');
+      heading.className = 'schedule-item-heading';
+      const status = document.createElement('span');
+      status.className = 'schedule-status';
+      status.dataset.status = schedule.status;
+      status.textContent = scheduleStatuses[schedule.status] ?? 'Unknown';
+      const mode = document.createElement('span');
+      mode.className = 'schedule-item-mode';
+      mode.textContent = schedule.mode === 'auto' ? 'Automatic submission' : 'Review suggestions';
+      heading.append(status, mode);
+      const link = document.createElement('a');
+      link.className = 'schedule-event-link';
+      link.textContent = schedule.url;
+      try {
+        link.href = scheduleUrl(schedule.url).href;
+        link.target = '_blank';
+        link.rel = 'noreferrer noopener';
+      } catch { /* Invalid persisted links stay inert. */ }
+      const times = document.createElement('p');
+      times.className = 'schedule-item-times';
+      times.textContent = `${sessionDate.format(new Date(schedule.startsAt))} – ${sessionDate.format(new Date(schedule.endsAt))}`;
+      const detail = document.createElement('p');
+      detail.className = 'field-help';
+      detail.textContent = schedule.detail;
+      item.append(heading, link, times, detail);
+      if (schedule.hasTab || schedule.status === 'pending' || schedule.status === 'starting' || schedule.status === 'running') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'button button-quiet schedule-cancel';
+        cancel.textContent = schedule.status === 'pending' && !schedule.hasTab ? 'Cancel schedule' : 'Stop & close tab';
+        cancel.setAttribute('aria-label', `${cancel.textContent}: ${schedule.url}`);
+        cancel.addEventListener('click', () => void scheduleAction(async () => {
+          await changeSchedules({ type: 'CANCEL_SCHEDULE', id: schedule.id });
+          scheduleActionStatus.textContent = 'Schedule cancelled. Its status below shows whether the event tab was closed.';
+        }));
+        item.append(cancel);
+      }
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'button button-quiet schedule-remove';
+      const active = schedule.hasTab || schedule.status === 'starting' || schedule.status === 'running';
+      remove.textContent = active ? 'Stop & remove' : 'Remove';
+      remove.title = active
+        ? 'Stop this scheduled session, close only its created event tab, and remove it from the list. A tab navigated away from its event is left open.'
+        : 'Permanently remove this session from the schedule and history.';
+      remove.setAttribute('aria-label', `${remove.textContent}: ${schedule.url}`);
+      remove.addEventListener('click', () => void scheduleAction(async () => {
+        await changeSchedules({ type: 'REMOVE_SCHEDULE', id: schedule.id });
+        scheduleActionStatus.textContent = 'Session removed from the schedule and history.';
+      }));
+      item.append(remove);
+      return item;
+    });
+    scheduleList.replaceChildren(...items);
+  }
+  element('schedule-empty').hidden = schedules.length !== 0;
+  updateScheduleControls();
+}
+
+async function changeSchedules(message: Record<string, unknown>): Promise<void> {
+  const response = await send(message);
+  if (!Array.isArray(response.schedules)) throw new Error('Could not read schedules. Reload the extension and try again.');
+  renderSchedules(response.schedules);
+}
+
+async function refreshSchedules(): Promise<void> {
+  if (schedulePolling || scheduleBusy) return;
+  schedulePolling = true;
+  const sequence = ++scheduleSequence;
+  updateScheduleControls();
+  try {
+    const response = await send({ type: 'GET_SCHEDULES' });
+    if (sequence !== scheduleSequence) return;
+    if (!Array.isArray(response.schedules)) throw new Error('Schedules are unavailable. Reload the extension and refresh this page.');
+    renderSchedules(response.schedules);
+  } catch (error) {
+    if (sequence === scheduleSequence) {
+      scheduleLoadStatus.textContent = error instanceof Error ? error.message : 'Could not refresh schedules.';
+    }
+  } finally {
+    schedulePolling = false;
+    updateScheduleControls();
+  }
+}
+
+async function scheduleAction(callback: () => Promise<void>): Promise<void> {
+  if (scheduleBusy || !scheduleInitialized) return;
+  scheduleBusy = true;
+  ++scheduleSequence;
+  updateScheduleControls();
+  scheduleActionStatus.textContent = '';
+  scheduleActionStatus.removeAttribute('data-state');
+  try {
+    await callback();
+    scheduleActionStatus.dataset.state = 'success';
+  } catch (error) {
+    scheduleActionStatus.textContent = error instanceof Error ? error.message : 'Could not update the schedule.';
+    scheduleActionStatus.dataset.state = 'error';
+  } finally {
+    scheduleBusy = false;
+    updateScheduleControls();
+  }
+}
+
+scheduleForm.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!scheduleForm.reportValidity()) return;
+  void scheduleAction(async () => {
+    const url = scheduleUrl(input('schedule-url').value).href;
+    const startValue = input('schedule-start').value;
+    const start = new Date(startValue);
+    const startsAt = start.getTime();
+    if (!Number.isFinite(startsAt) || startsAt <= Date.now() || localDateInput(start) !== startValue) {
+      throw new Error('Choose a future date and a valid local time. Times skipped by daylight saving cannot be scheduled.');
+    }
+    const durationMinutes = Number(input('schedule-duration').value);
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
+      throw new Error('Choose a whole number of minutes between 1 and 480.');
+    }
+    const mode = element<HTMLSelectElement>('schedule-mode').value === 'auto' ? 'auto' : 'suggest';
+    await changeSchedules({ type: 'ADD_SCHEDULE', url, startsAt, durationMinutes, mode });
+    scheduleActionStatus.textContent = 'Session scheduled. Keep Edge running and your computer awake.';
+  });
+});
+scheduleForm.addEventListener('input', updateSchedulePreview);
+element('refresh-schedules').addEventListener('click', () => void refreshSchedules());
+input('schedule-start').value = localDateInput(new Date(Date.now() + 30 * 60_000));
+element('schedule-timezone').textContent = `All schedule times use this browser's local time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`;
+updateSchedulePreview();
+updateScheduleControls();
+void refreshSchedules();
+const scheduleTimer = window.setInterval(() => void refreshSchedules(), 5_000);
+window.addEventListener('pagehide', () => window.clearInterval(scheduleTimer));

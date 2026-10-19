@@ -10,7 +10,7 @@
   <body class="popup-body">
     <main class="popup-shell">
       <header class="brand-row">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">EDGE EXTENSION</p><h1>Wooclap Auto</h1></div></div>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">YOUR QUESTION ASSISTANT</p><h1>Wooclap Auto</h1></div></div>
         <button id="settings-button" class="icon-button" title="Open settings" aria-label="Open settings"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/></svg></button>
       </header>
 
@@ -19,6 +19,7 @@
         <p id="bridge-mode" class="bridge-mode" hidden></p>
         <p id="session-detail" class="status-description" aria-live="polite">Open a Wooclap question or the practice page to begin.</p>
         <div class="session-metrics"><span><span class="metric-dot" aria-hidden="true"></span>Checks every 5 seconds</span><span id="request-count">0 / 25 requests</span></div>
+        <progress id="request-progress" max="25" value="0" aria-label="Session requests used"></progress>
       </section>
 
       <div class="main-actions"><button id="start-button" class="button button-primary" disabled>Start on this tab <span aria-hidden="true">↗</span></button><button id="pause-button" class="button button-secondary" disabled>Pause</button></div>
@@ -33,7 +34,7 @@
         <div id="suggestion-actions" class="suggestion-actions"><button id="approve-button" class="button button-primary" title="Submit this answer to the monitored session tab">Approve &amp; submit</button><button id="skip-button" class="button button-quiet">Skip</button></div>
       </section>
 
-      <section id="empty-state" class="empty-state" aria-label="Getting started"><span class="empty-glyph" aria-hidden="true">?</span><div><h2>Ready when the question is.</h2><p>Start a session to detect questions and prepare an answer.</p></div></section>
+      <section id="empty-state" class="empty-state" aria-label="Getting started"><span class="empty-glyph" aria-hidden="true">?</span><div><h2 id="empty-title">Ready when the question is.</h2><p id="empty-description">Start a session to detect questions and prepare an answer.</p></div></section>
 
       <section id="response-metadata" class="response-metadata" aria-labelledby="response-heading" hidden><div class="card-heading"><h2 id="response-heading" class="eyebrow">LATEST RESPONSE</h2><span id="response-source" class="response-source"></span></div><p id="response-model" class="response-model"></p><div class="response-stats"><span id="response-latency"></span><span id="response-tokens"></span></div></section>
 

@@ -1,3 +1,5 @@
+import { SessionScheduler, SCHEDULE_ALARM_PREFIX } from './scheduler';
+import type { ScheduledSession } from './shared/schedules';
 import { sourceForUrl } from './content/adapter';
 import { BackgroundTab } from './background-tab';
 import { CredentialVault } from './credentials';
@@ -17,6 +19,7 @@ let answerCache: Record<string, PendingAnswer> = {};
 let budgetDocument = '';
 let runId: string | null = null;
 let generation = 0;
+let scheduleInterruption = 0;
 let work: AbortController | null = null;
 let currentDocument = '';
 let pendingKey = '';
@@ -32,6 +35,19 @@ let credentialChanges = 0;
 let credentialMutation: Promise<void> = Promise.resolve();
 let providerProtocol = false;
 let directRequests = new DirectRequestGate();
+
+const scheduler = new SessionScheduler({
+  busy: () => state.running || startInProgress || Boolean(credentialChanges),
+  guard: () => {
+    const expected = scheduleInterruption;
+    return () => { if (scheduleInterruption !== expected) throw new Error('Scheduled startup was interrupted. Schedule again when ready.'); };
+  },
+  start: (tabId, job, guard) => start(tabId, job, guard),
+  stop: async (tabId, detail) => {
+    if ((state.tabId === tabId && state.running) || startingTabId === tabId) await pause(detail);
+  }
+});
+const backgroundEnabled = () => state.backgroundMode ?? settings.backgroundMode;
 
 const initialized = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
@@ -64,6 +80,7 @@ const initialized = (async () => {
   // A browser/worker restart never silently resumes a submission. Clean up the
   // prior session's tab protection while retaining its request ledger.
   await backgroundTab.recover();
+  await scheduler.initialize();
 })();
 
 function persist(): Promise<void> {
@@ -90,6 +107,8 @@ function invalidate(): void {
 }
 
 async function pause(detail = 'Paused. Press Start when you are ready.'): Promise<void> {
+  scheduleInterruption++;
+  void scheduler.stopped(startingTabId ?? state.tabId, detail).catch(() => undefined);
   invalidate();
   runId = null;
   state.running = false;
@@ -142,7 +161,7 @@ async function connectionHealth(): Promise<any> {
   return { ready: true, demo: false, model: settings.model, provider: settings.provider, connectionMode: 'direct' };
 }
 
-async function monitoredTab(tabId: number, requireForeground = !settings.backgroundMode): Promise<chrome.tabs.Tab> {
+async function monitoredTab(tabId: number, requireForeground = !backgroundEnabled()): Promise<chrome.tabs.Tab> {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url || !sourceForUrl(tab.url)) throw new Error('Open a Wooclap participant question or the local practice page.');
   if (tab.discarded) throw new Error('The monitored page was unloaded. Return to it and press Start.');
@@ -155,14 +174,15 @@ async function monitoredTab(tabId: number, requireForeground = !settings.backgro
 async function readCurrent(): Promise<{ observation: Observation; occurrence: number; documentKey: string; runId: string }> {
   if (state.tabId === null) throw new Error('No tab is selected.');
   await monitoredTab(state.tabId);
-  if (settings.backgroundMode && !backgroundTab.owns(state.tabId)) throw new Error('The background connection ended. Press Start to reconnect.');
+  if (backgroundEnabled() && !backgroundTab.owns(state.tabId)) throw new Error('The background connection ended. Press Start to reconnect.');
   const result = await chrome.tabs.sendMessage(state.tabId, { type: 'READ_CURRENT' });
   if (!result?.ok) throw new Error('Could not read the question. Refresh the page and press Start.');
   return result;
 }
 
 function isCurrent(expectedRun: string, expectedGeneration: number): boolean {
-  return state.running && runId === expectedRun && generation === expectedGeneration;
+  return state.running && runId === expectedRun && generation === expectedGeneration
+    && (state.endsAt === undefined || Date.now() < state.endsAt);
 }
 
 async function capture(rect: CaptureRect, tabId: number): Promise<string> {
@@ -173,7 +193,7 @@ async function capture(rect: CaptureRect, tabId: number): Promise<string> {
   if (![x, y, width, height, viewportWidth, viewportHeight].every(Number.isFinite) || x < 0 || y < 0 || width < 1 || height < 1
     || x + width > viewportWidth + 1 || y + height > viewportHeight + 1) throw new Error('The entire question and its images must be visible. Adjust zoom or scroll, then restart.');
   let dataUrl: string;
-  if (settings.backgroundMode) {
+  if (backgroundEnabled()) {
     try { dataUrl = await backgroundTab.capture(tabId); }
     catch (error) {
       // A timed-out CDP command cannot be canceled with Promise.race. Detach
@@ -200,23 +220,24 @@ async function capture(rect: CaptureRect, tabId: number): Promise<string> {
   } finally { bitmap.close(); }
 }
 
-async function start(tabId: number): Promise<void> {
+async function start(tabId: number, scheduled?: ScheduledSession, scheduleGuard?: () => void): Promise<void> {
   if (credentialChanges) throw new Error('Wait for the API key change to finish before starting.');
   if (startInProgress) throw new Error('A session is already starting.');
   if (state.running) throw new Error('Pause the current session before starting another.');
   startInProgress = true;
   startingTabId = tabId;
   const startGeneration = generation;
+  const backgroundMode = scheduled ? true : settings.backgroundMode;
   try {
     await stopping;
-    const stillStarting = () => { if (generation !== startGeneration) throw new Error('Starting was cancelled. Press Start when ready.'); };
+    const stillStarting = () => { scheduleGuard?.(); if (generation !== startGeneration) throw new Error('Starting was cancelled. Press Start when ready.'); };
     stillStarting();
-    const tab = await monitoredTab(tabId);
+    const tab = await monitoredTab(tabId, !backgroundMode);
     const health = await connectionHealth();
-    if (generation !== startGeneration) throw new Error('Starting was cancelled. Press Start when ready.');
+    stillStarting();
     if (!health.ready) throw new Error(health.detail || `Add a ${PROVIDER_LABELS[settings.provider]} API key in Settings${settings.connectionMode === 'bridge' ? ' or configure it on the local bridge' : ''}.`);
     if (health.demo && sourceForUrl(tab.url!) !== 'practice') throw new Error('Demo mode only answers the practice page. Select Direct API and add a key to answer Wooclap questions.');
-    const latestTab = await monitoredTab(tabId);
+    const latestTab = await monitoredTab(tabId, !backgroundMode);
     stillStarting();
     if (latestTab.url !== tab.url) throw new Error('The page changed while starting. Press Start on the new page.');
     invalidate();
@@ -224,17 +245,18 @@ async function start(tabId: number): Promise<void> {
     eventKey = '';
     currentDocument = '';
     providerProtocol = health.acceptsClientKeys === true;
-    state = { ...state, running: true, tabId, mode: settings.mode, pending: null,
+    state = { ...state, running: true, tabId, mode: scheduled?.mode ?? settings.mode, pending: null,
+      backgroundMode, scheduleId: scheduled?.id, endsAt: scheduled?.endsAt,
       connectionMode: health.connectionMode, bridgeMode: health.demo ? 'demo' : health.provider ?? settings.provider,
       model: health.connectionMode === 'hosted' ? health.model : settings.model };
     const expectedRun = runId, startedGeneration = generation;
-    const guard = () => { if (!isCurrent(expectedRun, startedGeneration)) throw new Error('Starting was cancelled. Press Start when ready.'); };
-    if (settings.backgroundMode) await backgroundTab.acquire(tabId, guard);
+    const guard = () => { scheduleGuard?.(); if (!isCurrent(expectedRun, startedGeneration)) throw new Error('Starting was cancelled. Press Start when ready.'); };
+    if (backgroundMode) await backgroundTab.acquire(tabId, guard);
     guard();
-    await update('waiting', settings.backgroundMode ? 'Background mode is watching the selected tab. You can switch tabs or minimize Edge.'
+    await update('waiting', backgroundMode ? 'Background mode is watching the selected tab. You can switch tabs or minimize Edge.'
       : health.demo ? 'Practice mode. Waiting for a supported question.' : 'Watching this tab for a supported question.');
     guard();
-    const message = { type: 'MONITOR_START', runId, selectors: settings.selectors, backgroundMode: settings.backgroundMode };
+    const message = { type: 'MONITOR_START', runId, selectors: settings.selectors, backgroundMode, endsAt: scheduled?.endsAt };
     try { await chrome.tabs.sendMessage(tabId, message); }
     catch {
       guard();
@@ -313,7 +335,7 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
     const cached = answerCache[key];
     if (cached) {
       await update(cached.answer.needsReview ? 'review' : 'suggestion', 'Restored the answer for this question without another AI request.', { pending: cached });
-      if (!cached.answer.needsReview && cached.question.application !== 'preview' && settings.mode === 'auto' && isCurrent(expectedRun, expectedGeneration)) await applyPending();
+      if (!cached.answer.needsReview && cached.question.application !== 'preview' && state.mode === 'auto' && isCurrent(expectedRun, expectedGeneration)) await applyPending();
     } else await update('review', 'This question was already requested or submitted. Waiting for the next question to avoid a duplicate.');
     return;
   }
@@ -324,7 +346,7 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
     if (state.requestCount >= settings.requestLimit) { await pause('The request limit was reached. Increase it in Settings to continue.'); return; }
     await monitoredTab(solvingTabId);
     if (!isCurrent(expectedRun, expectedGeneration)) return;
-    if (settings.backgroundMode && !backgroundTab.owns(solvingTabId)) throw new Error('The background connection ended. Press Start to reconnect.');
+    if (backgroundEnabled() && !backgroundTab.owns(solvingTabId)) throw new Error('The background connection ended. Press Start to reconnect.');
     let screenshot: string | undefined;
     if (question.imageKeys.length && settings.connectionMode !== 'demo') {
       if (!settings.captureImages) throw new Error('This question needs its image. Enable image capture in Settings.');
@@ -374,7 +396,7 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
     answerCache[key] = pending;
     await update('suggestion', question.application === 'preview' ? 'Answer preview ready. Apply it on the Wooclap page.'
       : response.demo ? 'Practice answer ready. Review it below.' : 'Answer ready. Review it below.', { pending });
-    if (question.application !== 'preview' && settings.mode === 'auto' && isCurrent(expectedRun, expectedGeneration)) await applyPending();
+    if (question.application !== 'preview' && state.mode === 'auto' && isCurrent(expectedRun, expectedGeneration)) await applyPending();
   } catch (error) {
     if (isCurrent(expectedRun, expectedGeneration)) await update('error', error instanceof Error ? error.message : 'The answer request failed.', { pending: null });
   } finally { releaseRequest?.(); if (work === controller) work = null; }
@@ -382,10 +404,11 @@ async function solve(observation: Observation, occurrence: number, documentKey: 
 
 async function handleContent(message: any, sender: chrome.runtime.MessageSender): Promise<object> {
   if (!state.running || sender.tab?.id !== state.tabId || sender.frameId !== 0 || message.runId !== runId) return { ok: true, stop: true };
+  if (state.endsAt !== undefined && Date.now() >= state.endsAt) { await pause('Scheduled duration ended.'); void scheduler.tick(); return { ok: true, stop: true }; }
   if (!sender.url || !sourceForUrl(sender.url)) return { ok: false, stop: true };
   if (message.type === 'PAGE_DEPARTED') { await pause('The monitored page was left. Press Start on the new page.'); return { ok: true }; }
   if (message.type === 'TAB_HIDDEN') {
-    if (!settings.backgroundMode) await pause('The monitored tab became inactive. Return to it and press Start.');
+    if (!backgroundEnabled()) await pause('The monitored tab became inactive. Return to it and press Start.');
     return { ok: true };
   }
   if (message.type === 'CONTENT_DIRTY') {
@@ -412,6 +435,10 @@ async function handle(message: any, sender: chrome.runtime.MessageSender): Promi
     throw new Error('Only the extension can change settings.');
   }
   switch (message.type) {
+    case 'GET_SCHEDULES': return { ok: true, schedules: scheduler.list() };
+    case 'ADD_SCHEDULE': return { ok: true, schedules: await scheduler.add(message) };
+    case 'CANCEL_SCHEDULE': return { ok: true, schedules: await scheduler.cancel(message.id) };
+    case 'REMOVE_SCHEDULE': return { ok: true, schedules: await scheduler.remove(message.id) };
     case 'GET_STATE': return { ok: true, state, settings, credentials: await credentials.status() };
     case 'CHECK_BRIDGE':
     case 'CHECK_CONNECTION': return { ok: true, health: await connectionHealth() };
@@ -437,14 +464,14 @@ async function handle(message: any, sender: chrome.runtime.MessageSender): Promi
     }
     case 'SAVE_SETTINGS': {
       const next = normalizeSettings(message.settings);
-      if (state.running || startInProgress) await pause('Settings changed. Press Start to apply them.');
+      if (state.running || startInProgress || scheduler.starting) await pause('Settings changed. Press Start to apply them.');
       settings = next;
       state.mode = settings.mode;
       await chrome.storage.local.set({ settings });
       await persist();
       return { ok: true, state, settings };
     }
-    case 'START': await start(message.tabId); break;
+    case 'START': if (scheduler.starting) throw new Error('A scheduled session is starting. Cancel it first.'); await start(message.tabId); break;
     case 'PAUSE': await pause(); break;
     case 'APPROVE': {
       if (message.answer !== undefined) {
@@ -467,7 +494,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   void handle(message, sender).then(reply).catch(error => reply({ ok: false, error: error instanceof Error ? error.message : 'Extension request failed.' }));
   return true;
 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name.startsWith(SCHEDULE_ALARM_PREFIX)) void initialized.then(() => scheduler.tick()).catch(() => undefined);
+});
+chrome.runtime.onStartup.addListener(() => { void initialized.then(() => scheduler.tick()).catch(() => undefined); });
 chrome.tabs.onRemoved.addListener(tabId => { void initialized.then(() => {
+  void scheduler.removed(tabId);
   if ((state.tabId === tabId && state.running) || startingTabId === tabId) return pause('The monitored tab was closed.');
 }); });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
@@ -477,7 +509,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 });
 chrome.tabs.onActivated.addListener(info => {
   void initialized.then(async () => {
-    if (!state.running || settings.backgroundMode || state.tabId === null || info.tabId === state.tabId) return;
+    if (!state.running || backgroundEnabled() || state.tabId === null || info.tabId === state.tabId) return;
     const tab = await chrome.tabs.get(state.tabId).catch(() => null);
     if (!tab || tab.windowId === info.windowId) await pause('The monitored tab became inactive. Return to it and press Start.');
   });

@@ -1651,16 +1651,21 @@ Choose using the supplied full scale descriptions. Any optional participant comm
     });
     if (controls.size !== rows.length || choices.some((c) => !c.id || c.id.length > 256 || !c.text) || !label2(title)) return unsupported4("Sorting item labels or identifiers are missing or duplicated.");
     if (rows.some((row) => !query6(row, "button[aria-controls]").length)) return unsupported4("Sorting movement controls are unavailable.");
-    return { question: {
-      kind: "sorting",
-      source: "wooclap",
-      eventKey: eventKey2,
-      questionId: null,
-      text: label2(title),
-      choices,
-      multiple: false,
-      imageKeys: []
-    }, scope, controls, rect: bounds3([title, lists[0]], doc) };
+    return {
+      question: {
+        kind: "sorting",
+        source: "wooclap",
+        eventKey: eventKey2,
+        questionId: null,
+        text: label2(title),
+        choices,
+        multiple: false,
+        imageKeys: []
+      },
+      scope,
+      controls,
+      rect: bounds3([title, lists[0]], doc)
+    };
   }
   var titleSelector2 = '[data-test-id="Question.participant.title"]';
   var feedbackSelector = '[data-test-id="participant-feedback-banner"]';
@@ -2175,6 +2180,8 @@ Choose using the supplied full scale descriptions. Any optional participant comm
   function install() {
     const documentKey = crypto.randomUUID();
     let runId = null;
+    let endsAt;
+    const expired = () => endsAt !== void 0 && Date.now() >= endsAt;
     let backgroundMode = false;
     let selectors = DEFAULT_SETTINGS.selectors;
     let occurrence = 0;
@@ -2221,7 +2228,7 @@ Choose using the supplied full scale descriptions. Any optional participant comm
       preparing = true;
       try {
         const guard = () => {
-          if (runId !== expectedRun || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
+          if (runId !== expectedRun || expired() || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
           if (userRevision !== expectedRevision) throw new Error("You interacted with the page. Question preparation stopped.");
         };
         await prepareStructured(document, guard);
@@ -2276,7 +2283,7 @@ Choose using the supplied full scale descriptions. Any optional participant comm
       while (preparing && runId === expectedRun && Date.now() < preparationDeadline) await new Promise((resolve) => setTimeout(resolve, 25));
       if (preparing) throw new Error("The question options are still loading. Review the page before continuing.");
       const check = () => {
-        if (runId !== expectedRun || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
+        if (runId !== expectedRun || expired() || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
         const current = inspect();
         if (!current.question || current.state !== "question" || occurrence !== pending.occurrence || fingerprint(current.question) !== pending.fingerprint) throw new Error("The question changed. The previous answer was discarded.");
         const issue = validateAnswer(current.question, pending.answer);
@@ -2290,7 +2297,7 @@ Choose using the supplied full scale descriptions. Any optional participant comm
       applying = true;
       try {
         const result = await selectAnswer(pending.question, pending.answer, selectors, document, () => {
-          if (runId !== expectedRun || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
+          if (runId !== expectedRun || expired() || !backgroundMode && document.visibilityState !== "visible") throw new Error("Session paused or tab inactive.");
           if (userRevision !== initialRevision) throw new Error("You edited the page while the answer was being applied. Automatic submission stopped.");
         });
         if (!result.submittedBySelection) {
@@ -2328,6 +2335,7 @@ Choose using the supplied full scale descriptions. Any optional participant comm
       if (message.type === "MONITOR_START") {
         runId = message.runId;
         backgroundMode = message.backgroundMode === true;
+        endsAt = Number.isFinite(message.endsAt) ? message.endsAt : void 0;
         selectors = message.selectors;
         lastSent = "";
         candidate = "";

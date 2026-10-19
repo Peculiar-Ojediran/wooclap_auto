@@ -31,8 +31,12 @@ function extractSorting(scope: Element, title: Element, eventKey: string, doc: D
   if (controls.size !== rows.length || choices.some(c => !c.id || c.id.length > 256 || !c.text)
     || !label(title)) return unsupported('Sorting item labels or identifiers are missing or duplicated.');
   if (rows.some(row => !query(row, 'button[aria-controls]').length)) return unsupported('Sorting movement controls are unavailable.');
-  return { question: { kind: 'sorting', source: 'wooclap', eventKey, questionId: null,
-    text: label(title), choices, multiple: false, imageKeys: [] }, scope, controls, rect: bounds([title, lists[0]], doc) };
+  return {
+    question: {
+      kind: 'sorting', source: 'wooclap', eventKey, questionId: null,
+      text: label(title), choices, multiple: false, imageKeys: []
+    }, scope, controls, rect: bounds([title, lists[0]], doc)
+  };
 }
 
 const titleSelector = '[data-test-id="Question.participant.title"]';
@@ -95,8 +99,10 @@ function bounds(elements: Element[], doc: Document): CaptureRect {
   const top = boxes.length ? Math.min(...boxes.map(box => box.top)) : 0;
   const right = boxes.length ? Math.max(...boxes.map(box => box.right)) : 0;
   const bottom = boxes.length ? Math.max(...boxes.map(box => box.bottom)) : 0;
-  return { x: left, y: top, width: right - left, height: bottom - top,
-    viewportWidth: doc.defaultView?.innerWidth ?? 0, viewportHeight: doc.defaultView?.innerHeight ?? 0 };
+  return {
+    x: left, y: top, width: right - left, height: bottom - top,
+    viewportWidth: doc.defaultView?.innerWidth ?? 0, viewportHeight: doc.defaultView?.innerHeight ?? 0
+  };
 }
 
 function participantScope(doc: Document): Element | null {
@@ -189,7 +195,9 @@ export function extractWooclap(doc: Document): LiveQuestion | Observation {
   if (!text || choices.some(choice => !choice.text || !/^choice-[1-9]\d*$/.test(choice.id)) || controlMap.size !== choices.length) {
     return { question: null, state: 'unsupported', detail: 'Question text or choice labels/indices are missing or ambiguous.' };
   }
-  const question: Question = { source: 'wooclap', eventKey, questionId: null, text, choices, multiple,
-    imageKeys: meaningfulImages.map(img => imageKey(`${img.currentSrc || img.src}|${compact(img.alt)}`)) };
+  const question: Question = {
+    source: 'wooclap', eventKey, questionId: null, text, choices, multiple,
+    imageKeys: meaningfulImages.map(img => imageKey(`${img.currentSrc || img.src}|${compact(img.alt)}`))
+  };
   return { question, scope, controls: controlMap, rect: bounds([title, group, ...controls, ...meaningfulImages], doc) };
 }

@@ -106,6 +106,9 @@ export interface PendingAnswer {
 }
 export interface LogEntry { time: number; message: string }
 export interface SessionState {
+  backgroundMode?: boolean;
+  scheduleId?: string;
+  endsAt?: number;
   running: boolean;
   tabId: number | null;
   phase: 'idle' | 'waiting' | 'solving' | 'suggestion' | 'submitting' | 'submitted' | 'review' | 'error' | 'paused';

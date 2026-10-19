@@ -6,6 +6,10 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
+  // src/content/structured.ts
+  var inputSelector = 'input[type="text"], input[type="number"], input:not([type])';
+  var blankSelector = `${inputSelector}, button[role="combobox"][aria-haspopup="listbox"]`;
+
   // src/shared/types.ts
   var PROVIDER_MODELS = { openai: "gpt-4.1-mini", anthropic: "claude-sonnet-5-5", nvidia: "deepseek-ai/deepseek-v4.1-flash" };
   var PROVIDER_LABELS = { openai: "OpenAI", anthropic: "Claude (Anthropic)", nvidia: "NVIDIA (DeepSeek)" };
@@ -246,6 +250,321 @@
     }
   };
 
+  // src/content/advanced.ts
+  var ADVANCED_TYPES = ".Rating, .Prioritization, .Brainstorm, .Framework, .LabelAnImage, .ShowOnImage, .DragAndDrop, .Concordance, .SCTJudgment";
+
+  // src/content/wooclap.ts
+  var participantSelector = `.MCQ, .Poll, .Sorting, .GuessNumber, .OpenQuestion, .WordCloud, .FillInTheBlanks, .Matching, ${ADVANCED_TYPES}`;
+  var reservedRoutes = /* @__PURE__ */ new Set([
+    "public",
+    "auth",
+    "login",
+    "signin",
+    "signup",
+    "register",
+    "events",
+    "event",
+    "participant",
+    "features",
+    "pricing",
+    "about",
+    "blog",
+    "logout",
+    "blocked-locked-plan",
+    "trial"
+  ]);
+  function eventKeyForUrl(value) {
+    try {
+      const url2 = new URL(value);
+      if (url2.protocol !== "https:" || !(url2.hostname === "wooclap.com" || url2.hostname.endsWith(".wooclap.com"))) return null;
+      const match = url2.pathname.match(/^\/([a-z\d_-]+)(?:\/(?:questionnaires|presentations)\/[a-z\d_-]+|\/(?:wall|report)(?:\/votes)?)?\/?$/i);
+      if (!match || reservedRoutes.has(match[1].toLowerCase())) return null;
+      return `${url2.origin}/event/${match[1].toUpperCase()}`;
+    } catch {
+      return null;
+    }
+  }
+
+  // src/shared/schedules.ts
+  function scheduleUrl(value) {
+    if (typeof value !== "string" || value.length > 2048) throw new Error("Enter a Wooclap participant link.");
+    let url2;
+    try {
+      url2 = new URL(value);
+    } catch {
+      throw new Error("Enter a full HTTPS Wooclap link.");
+    }
+    if (url2.protocol !== "https:" || url2.username || url2.password || url2.port || !(url2.hostname === "wooclap.com" || url2.hostname.endsWith(".wooclap.com"))) {
+      throw new Error("Use an HTTPS link on wooclap.com without embedded credentials or a custom port.");
+    }
+    if (!eventKeyForUrl(url2.href)) throw new Error("Use a Wooclap participant event link, such as https://app.wooclap.com/ABCDEF.");
+    return url2.href;
+  }
+  function sameScheduledEvent(first, second) {
+    try {
+      const event = (value) => eventKeyForUrl(scheduleUrl(value))?.split("/event/")[1];
+      return second !== void 0 && event(first) === event(second);
+    } catch {
+      return false;
+    }
+  }
+  function newSchedule(input2, now, id) {
+    const url2 = scheduleUrl(input2?.url);
+    if (!Number.isSafeInteger(input2.startsAt) || input2.startsAt <= now || input2.startsAt > now + 366 * 864e5) {
+      throw new Error("Choose a future start time within the next year.");
+    }
+    if (!Number.isInteger(input2.durationMinutes) || input2.durationMinutes < 1 || input2.durationMinutes > 480) {
+      throw new Error("Duration must be a whole number from 1 to 480 minutes.");
+    }
+    if (input2.mode !== "auto" && input2.mode !== "suggest") throw new Error("Choose an answer mode.");
+    return {
+      id,
+      url: url2,
+      startsAt: input2.startsAt,
+      endsAt: input2.startsAt + input2.durationMinutes * 6e4,
+      mode: input2.mode,
+      status: "pending",
+      detail: "Scheduled. Uses the connection and provider saved at start time."
+    };
+  }
+
+  // src/scheduler.ts
+  var SCHEDULE_ALARM_PREFIX = "wooclap-schedule:";
+  var active = (job) => job.status === "starting" || job.status === "running";
+  var SessionScheduler = class {
+    constructor(hooks, api = chrome, now = () => Date.now()) {
+      this.hooks = hooks;
+      this.api = api;
+      this.now = now;
+    }
+    jobs = [];
+    owned = {};
+    writes = Promise.resolve();
+    operations = Promise.resolve();
+    launches = /* @__PURE__ */ new Map();
+    list() {
+      return structuredClone(this.jobs.map((job) => ({ ...job, hasTab: this.owned[job.id] !== void 0 })));
+    }
+    get starting() {
+      return this.launches.size > 0 || this.jobs.some((job) => job.status === "starting");
+    }
+    queue(task) {
+      const next = this.operations.catch(() => void 0).then(task);
+      this.operations = next;
+      return next;
+    }
+    save() {
+      const local = structuredClone(this.jobs), owned = { ...this.owned };
+      this.writes = this.writes.catch(() => void 0).then(async () => {
+        await this.api.storage.session.set({ scheduleTabs: owned });
+        await this.api.storage.local.set({ schedules: local });
+      });
+      return this.writes;
+    }
+    async initialize() {
+      const saved = (await this.api.storage.local.get("schedules")).schedules;
+      const owned = (await this.api.storage.session.get("scheduleTabs")).scheduleTabs;
+      if (Array.isArray(saved)) this.jobs = saved.filter((job) => {
+        try {
+          return typeof job.id === "string" && /^[\w-]{1,80}$/.test(job.id) && scheduleUrl(job.url) && Number.isSafeInteger(job.startsAt) && Number.isSafeInteger(job.endsAt) && job.endsAt > job.startsAt && job.endsAt - job.startsAt <= 480 * 6e4 && ["auto", "suggest"].includes(job.mode) && ["pending", "starting", "running", "completed", "cancelled", "missed", "failed"].includes(job.status) && typeof job.detail === "string";
+        } catch {
+          return false;
+        }
+      }).slice(-50);
+      for (const job of this.jobs) {
+        if (owned && Number.isInteger(owned[job.id])) this.owned[job.id] = owned[job.id];
+        if (active(job)) {
+          job.status = "failed";
+          job.detail = "Monitoring stopped after the extension or browser restarted. No answers were retried.";
+        }
+      }
+      await this.save();
+      for (const job of this.jobs) await this.arm(job);
+      await this.tick();
+    }
+    async arm(job) {
+      if (job.status === "pending") await this.api.alarms.create(SCHEDULE_ALARM_PREFIX + job.id + ":start", { when: job.startsAt });
+      if (job.status === "pending" || active(job) || this.owned[job.id] !== void 0) {
+        await this.api.alarms.create(SCHEDULE_ALARM_PREFIX + job.id + ":end", { when: job.endsAt });
+        await this.api.alarms.create(SCHEDULE_ALARM_PREFIX + "watchdog", { periodInMinutes: 1 });
+      }
+    }
+    add(input2) {
+      return this.queue(async () => {
+        const job = newSchedule(input2, this.now(), crypto.randomUUID());
+        if (this.jobs.some((other) => (other.status === "pending" || active(other)) && job.startsAt < other.endsAt && job.endsAt > other.startsAt)) {
+          throw new Error("This time overlaps another scheduled session. Choose another time or cancel that session.");
+        }
+        if (this.jobs.filter((other) => other.status === "pending" || active(other) || this.owned[other.id] !== void 0).length >= 20) {
+          throw new Error("You can keep up to 20 upcoming or active schedules.");
+        }
+        this.jobs = this.jobs.filter((other) => other.status === "pending" || active(other) || this.owned[other.id] !== void 0 || this.jobs.indexOf(other) >= this.jobs.length - 29);
+        this.jobs.push(job);
+        await this.save();
+        try {
+          await this.arm(job);
+        } catch {
+          job.status = "failed";
+          job.detail = "Could not register browser alarms. Reload the extension and schedule again.";
+          await this.save();
+          throw new Error(job.detail);
+        }
+        return this.list();
+      });
+    }
+    cancel(id) {
+      return this.queue(async () => {
+        const job = this.jobs.find((job2) => job2.id === id);
+        if (!job) throw new Error("This schedule no longer exists.");
+        job.status = "cancelled";
+        job.detail = "Cancelled by you.";
+        await this.save();
+        await this.close(job);
+        return this.list();
+      });
+    }
+    remove(id) {
+      return this.queue(async () => {
+        const job = this.jobs.find((job2) => job2.id === id);
+        if (!job) throw new Error("This schedule no longer exists.");
+        job.status = "cancelled";
+        job.detail = "Stopped for removal.";
+        await this.save();
+        await this.close(job);
+        await this.launches.get(job.id);
+        if (this.owned[job.id] !== void 0) await this.close(job);
+        if (this.owned[job.id] !== void 0) {
+          throw new Error("Monitoring stopped, but Edge could not close the scheduled tab. Try Remove again.");
+        }
+        this.jobs = this.jobs.filter((other) => other.id !== id);
+        await this.save();
+        if (!this.jobs.some((other) => other.status === "pending" || active(other) || this.owned[other.id] !== void 0)) {
+          await this.api.alarms.clear(SCHEDULE_ALARM_PREFIX + "watchdog");
+        }
+        return this.list();
+      });
+    }
+    tick() {
+      return this.queue(async () => {
+        for (const job of this.jobs) {
+          if (this.now() >= job.endsAt && (job.status === "pending" || active(job) || this.owned[job.id] !== void 0)) {
+            if (job.status === "pending") {
+              job.status = "missed";
+              job.detail = "The scheduled time ended before the session could start.";
+            } else if (active(job)) {
+              job.status = "completed";
+              job.detail = "Scheduled duration ended.";
+            }
+            await this.close(job);
+          } else if (job.status === "pending" && this.now() >= job.startsAt) {
+            if (this.hooks.busy() || this.starting) {
+              job.status = "failed";
+              job.detail = "Another session was in use at the start time. It was left unchanged.";
+            } else {
+              job.status = "starting";
+              job.detail = "Opening the scheduled question tab\u2026";
+              const runtimeGuard = this.hooks.guard?.();
+              await this.save();
+              this.launches.set(job.id, this.launch(job, runtimeGuard).catch(() => void 0).finally(() => {
+                this.launches.delete(job.id);
+              }));
+            }
+          }
+        }
+        await this.save();
+        if (!this.jobs.some((job) => job.status === "pending" || active(job) || this.owned[job.id] !== void 0)) {
+          await this.api.alarms.clear(SCHEDULE_ALARM_PREFIX + "watchdog");
+        }
+      });
+    }
+    async launch(job, runtimeGuard) {
+      const guard = () => {
+        runtimeGuard?.();
+        if (!active(job) || this.now() >= job.endsAt) throw new Error("The schedule ended or was cancelled.");
+      };
+      try {
+        guard();
+        let tab;
+        try {
+          tab = await this.api.tabs.create({ url: "about:blank", active: false });
+        } catch {
+          guard();
+          const window2 = await this.api.windows.create({ url: "about:blank", focused: false, state: "minimized", type: "normal" });
+          if (!window2?.tabs?.[0]) throw new Error("Edge could not open a scheduled window.");
+          tab = window2.tabs[0];
+        }
+        if (tab.id === void 0) throw new Error("Edge did not create a tab.");
+        this.owned[job.id] = tab.id;
+        await this.save();
+        guard();
+        await this.api.tabs.update(tab.id, { url: job.url });
+        const loadDeadline = Math.min(job.endsAt, this.now() + 6e4);
+        while (true) {
+          guard();
+          const current = await this.api.tabs.get(tab.id);
+          if (current.status === "complete" && !current.pendingUrl && current.url !== "about:blank") {
+            if (!sameScheduledEvent(job.url, current.url)) throw new Error("The scheduled link redirected away from the participant event. Join the event manually.");
+            break;
+          }
+          if (this.now() >= loadDeadline) throw new Error("The scheduled page did not finish loading within one minute.");
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        guard();
+        await this.hooks.start(tab.id, job, guard);
+        guard();
+        job.status = "running";
+        job.detail = "Scheduled session started. The tab will close at the scheduled end time.";
+        await this.save();
+      } catch (error62) {
+        if (active(job)) {
+          job.status = "failed";
+          job.detail = error62 instanceof Error ? error62.message : "The scheduled session could not start.";
+        }
+        await this.save();
+        if (job.status === "cancelled" || this.now() >= job.endsAt) await this.close(job);
+      }
+    }
+    async close(job) {
+      const tabId = this.owned[job.id];
+      if (tabId !== void 0) {
+        await this.hooks.stop(tabId, job.detail);
+        const tab = await this.api.tabs.get(tabId).catch(() => null);
+        if (tab && (!tab.pendingUrl || sameScheduledEvent(job.url, tab.pendingUrl)) && (tab.url === "about:blank" || sameScheduledEvent(job.url, tab.url))) {
+          try {
+            await this.api.tabs.remove(tabId);
+          } catch {
+            job.detail = "Monitoring stopped. Edge could not close the scheduled tab; cleanup will retry.";
+            await this.save();
+            return;
+          }
+        }
+        delete this.owned[job.id];
+      }
+      await this.api.alarms.clear(SCHEDULE_ALARM_PREFIX + job.id + ":start");
+      await this.api.alarms.clear(SCHEDULE_ALARM_PREFIX + job.id + ":end");
+      await this.save();
+    }
+    stopped(tabId, detail) {
+      for (const job of this.jobs) if (this.owned[job.id] === tabId && active(job)) {
+        job.status = this.now() >= job.endsAt ? "completed" : "failed";
+        job.detail = this.now() >= job.endsAt ? "Scheduled duration ended." : detail + " The scheduled tab will still close at its end time.";
+      }
+      return this.save();
+    }
+    removed(tabId) {
+      return this.queue(async () => {
+        for (const job of this.jobs) if (this.owned[job.id] === tabId) {
+          delete this.owned[job.id];
+          if (active(job)) {
+            job.status = "cancelled";
+            job.detail = "The scheduled tab was closed.";
+          }
+        }
+        await this.save();
+      });
+    }
+  };
+
   // src/shared/urls.ts
   function isPackagedPracticeUrl(value) {
     if (typeof chrome === "undefined" || !chrome.runtime?.getURL) return false;
@@ -261,16 +580,6 @@
     const page = value.split(/[?#]/)[0];
     return page === chrome.runtime.getURL("options.html") || page === chrome.runtime.getURL("popup.html");
   }
-
-  // src/content/structured.ts
-  var inputSelector = 'input[type="text"], input[type="number"], input:not([type])';
-  var blankSelector = `${inputSelector}, button[role="combobox"][aria-haspopup="listbox"]`;
-
-  // src/content/advanced.ts
-  var ADVANCED_TYPES = ".Rating, .Prioritization, .Brainstorm, .Framework, .LabelAnImage, .ShowOnImage, .DragAndDrop, .Concordance, .SCTJudgment";
-
-  // src/content/wooclap.ts
-  var participantSelector = `.MCQ, .Poll, .Sorting, .GuessNumber, .OpenQuestion, .WordCloud, .FillInTheBlanks, .Matching, ${ADVANCED_TYPES}`;
 
   // src/content/adapter.ts
   function sourceForUrl(value) {
@@ -38263,6 +38572,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var budgetDocument = "";
   var runId = null;
   var generation = 0;
+  var scheduleInterruption = 0;
   var work = null;
   var currentDocument = "";
   var pendingKey = "";
@@ -38278,6 +38588,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var credentialMutation = Promise.resolve();
   var providerProtocol = false;
   var directRequests = new DirectRequestGate();
+  var scheduler = new SessionScheduler({
+    busy: () => state.running || startInProgress || Boolean(credentialChanges),
+    guard: () => {
+      const expected = scheduleInterruption;
+      return () => {
+        if (scheduleInterruption !== expected) throw new Error("Scheduled startup was interrupted. Schedule again when ready.");
+      };
+    },
+    start: (tabId, job, guard) => start(tabId, job, guard),
+    stop: async (tabId, detail) => {
+      if (state.tabId === tabId && state.running || startingTabId === tabId) await pause(detail);
+    }
+  });
+  var backgroundEnabled = () => state.backgroundMode ?? settings.backgroundMode;
   var initialized = (async () => {
     await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
     await chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
@@ -38313,6 +38637,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
     }
     await backgroundTab.recover();
+    await scheduler.initialize();
   })();
   function persist() {
     const snapshot = structuredClone({ session: state, ledger: ledger.serialize(), answerCache, budgetDocument, directRequestTimes: directRequests.serialize() });
@@ -38335,6 +38660,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     pendingKey = "";
   }
   async function pause(detail = "Paused. Press Start when you are ready.") {
+    scheduleInterruption++;
+    void scheduler.stopped(startingTabId ?? state.tabId, detail).catch(() => void 0);
     invalidate();
     runId = null;
     state.running = false;
@@ -38386,7 +38713,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (!stored) return hostedHealth();
     return { ready: true, demo: false, model: settings.model, provider: settings.provider, connectionMode: "direct" };
   }
-  async function monitoredTab(tabId, requireForeground = !settings.backgroundMode) {
+  async function monitoredTab(tabId, requireForeground = !backgroundEnabled()) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.url || !sourceForUrl(tab.url)) throw new Error("Open a Wooclap participant question or the local practice page.");
     if (tab.discarded) throw new Error("The monitored page was unloaded. Return to it and press Start.");
@@ -38398,13 +38725,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   async function readCurrent() {
     if (state.tabId === null) throw new Error("No tab is selected.");
     await monitoredTab(state.tabId);
-    if (settings.backgroundMode && !backgroundTab.owns(state.tabId)) throw new Error("The background connection ended. Press Start to reconnect.");
+    if (backgroundEnabled() && !backgroundTab.owns(state.tabId)) throw new Error("The background connection ended. Press Start to reconnect.");
     const result = await chrome.tabs.sendMessage(state.tabId, { type: "READ_CURRENT" });
     if (!result?.ok) throw new Error("Could not read the question. Refresh the page and press Start.");
     return result;
   }
   function isCurrent(expectedRun, expectedGeneration) {
-    return state.running && runId === expectedRun && generation === expectedGeneration;
+    return state.running && runId === expectedRun && generation === expectedGeneration && (state.endsAt === void 0 || Date.now() < state.endsAt);
   }
   async function capture(rect, tabId) {
     const captureRun = runId, captureGeneration = generation;
@@ -38413,7 +38740,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const { x, y, width, height, viewportWidth, viewportHeight } = rect;
     if (![x, y, width, height, viewportWidth, viewportHeight].every(Number.isFinite) || x < 0 || y < 0 || width < 1 || height < 1 || x + width > viewportWidth + 1 || y + height > viewportHeight + 1) throw new Error("The entire question and its images must be visible. Adjust zoom or scroll, then restart.");
     let dataUrl;
-    if (settings.backgroundMode) {
+    if (backgroundEnabled()) {
       try {
         dataUrl = await backgroundTab.capture(tabId);
       } catch (error62) {
@@ -38440,25 +38767,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       bitmap.close();
     }
   }
-  async function start(tabId) {
+  async function start(tabId, scheduled, scheduleGuard) {
     if (credentialChanges) throw new Error("Wait for the API key change to finish before starting.");
     if (startInProgress) throw new Error("A session is already starting.");
     if (state.running) throw new Error("Pause the current session before starting another.");
     startInProgress = true;
     startingTabId = tabId;
     const startGeneration = generation;
+    const backgroundMode = scheduled ? true : settings.backgroundMode;
     try {
       await stopping;
       const stillStarting = () => {
+        scheduleGuard?.();
         if (generation !== startGeneration) throw new Error("Starting was cancelled. Press Start when ready.");
       };
       stillStarting();
-      const tab = await monitoredTab(tabId);
+      const tab = await monitoredTab(tabId, !backgroundMode);
       const health = await connectionHealth();
-      if (generation !== startGeneration) throw new Error("Starting was cancelled. Press Start when ready.");
+      stillStarting();
       if (!health.ready) throw new Error(health.detail || `Add a ${PROVIDER_LABELS[settings.provider]} API key in Settings${settings.connectionMode === "bridge" ? " or configure it on the local bridge" : ""}.`);
       if (health.demo && sourceForUrl(tab.url) !== "practice") throw new Error("Demo mode only answers the practice page. Select Direct API and add a key to answer Wooclap questions.");
-      const latestTab = await monitoredTab(tabId);
+      const latestTab = await monitoredTab(tabId, !backgroundMode);
       stillStarting();
       if (latestTab.url !== tab.url) throw new Error("The page changed while starting. Press Start on the new page.");
       invalidate();
@@ -38470,21 +38799,25 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         ...state,
         running: true,
         tabId,
-        mode: settings.mode,
+        mode: scheduled?.mode ?? settings.mode,
         pending: null,
+        backgroundMode,
+        scheduleId: scheduled?.id,
+        endsAt: scheduled?.endsAt,
         connectionMode: health.connectionMode,
         bridgeMode: health.demo ? "demo" : health.provider ?? settings.provider,
         model: health.connectionMode === "hosted" ? health.model : settings.model
       };
       const expectedRun = runId, startedGeneration = generation;
       const guard = () => {
+        scheduleGuard?.();
         if (!isCurrent(expectedRun, startedGeneration)) throw new Error("Starting was cancelled. Press Start when ready.");
       };
-      if (settings.backgroundMode) await backgroundTab.acquire(tabId, guard);
+      if (backgroundMode) await backgroundTab.acquire(tabId, guard);
       guard();
-      await update("waiting", settings.backgroundMode ? "Background mode is watching the selected tab. You can switch tabs or minimize Edge." : health.demo ? "Practice mode. Waiting for a supported question." : "Watching this tab for a supported question.");
+      await update("waiting", backgroundMode ? "Background mode is watching the selected tab. You can switch tabs or minimize Edge." : health.demo ? "Practice mode. Waiting for a supported question." : "Watching this tab for a supported question.");
       guard();
-      const message = { type: "MONITOR_START", runId, selectors: settings.selectors, backgroundMode: settings.backgroundMode };
+      const message = { type: "MONITOR_START", runId, selectors: settings.selectors, backgroundMode, endsAt: scheduled?.endsAt };
       try {
         await chrome.tabs.sendMessage(tabId, message);
       } catch {
@@ -38571,7 +38904,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const cached2 = answerCache[key];
       if (cached2) {
         await update(cached2.answer.needsReview ? "review" : "suggestion", "Restored the answer for this question without another AI request.", { pending: cached2 });
-        if (!cached2.answer.needsReview && cached2.question.application !== "preview" && settings.mode === "auto" && isCurrent(expectedRun, expectedGeneration)) await applyPending();
+        if (!cached2.answer.needsReview && cached2.question.application !== "preview" && state.mode === "auto" && isCurrent(expectedRun, expectedGeneration)) await applyPending();
       } else await update("review", "This question was already requested or submitted. Waiting for the next question to avoid a duplicate.");
       return;
     }
@@ -38585,7 +38918,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
       await monitoredTab(solvingTabId);
       if (!isCurrent(expectedRun, expectedGeneration)) return;
-      if (settings.backgroundMode && !backgroundTab.owns(solvingTabId)) throw new Error("The background connection ended. Press Start to reconnect.");
+      if (backgroundEnabled() && !backgroundTab.owns(solvingTabId)) throw new Error("The background connection ended. Press Start to reconnect.");
       let screenshot;
       if (question.imageKeys.length && settings.connectionMode !== "demo") {
         if (!settings.captureImages) throw new Error("This question needs its image. Enable image capture in Settings.");
@@ -38640,7 +38973,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
       answerCache[key] = pending;
       await update("suggestion", question.application === "preview" ? "Answer preview ready. Apply it on the Wooclap page." : response.demo ? "Practice answer ready. Review it below." : "Answer ready. Review it below.", { pending });
-      if (question.application !== "preview" && settings.mode === "auto" && isCurrent(expectedRun, expectedGeneration)) await applyPending();
+      if (question.application !== "preview" && state.mode === "auto" && isCurrent(expectedRun, expectedGeneration)) await applyPending();
     } catch (error62) {
       if (isCurrent(expectedRun, expectedGeneration)) await update("error", error62 instanceof Error ? error62.message : "The answer request failed.", { pending: null });
     } finally {
@@ -38650,13 +38983,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
   async function handleContent(message, sender) {
     if (!state.running || sender.tab?.id !== state.tabId || sender.frameId !== 0 || message.runId !== runId) return { ok: true, stop: true };
+    if (state.endsAt !== void 0 && Date.now() >= state.endsAt) {
+      await pause("Scheduled duration ended.");
+      void scheduler.tick();
+      return { ok: true, stop: true };
+    }
     if (!sender.url || !sourceForUrl(sender.url)) return { ok: false, stop: true };
     if (message.type === "PAGE_DEPARTED") {
       await pause("The monitored page was left. Press Start on the new page.");
       return { ok: true };
     }
     if (message.type === "TAB_HIDDEN") {
-      if (!settings.backgroundMode) await pause("The monitored tab became inactive. Return to it and press Start.");
+      if (!backgroundEnabled()) await pause("The monitored tab became inactive. Return to it and press Start.");
       return { ok: true };
     }
     if (message.type === "CONTENT_DIRTY") {
@@ -38684,6 +39022,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       throw new Error("Only the extension can change settings.");
     }
     switch (message.type) {
+      case "GET_SCHEDULES":
+        return { ok: true, schedules: scheduler.list() };
+      case "ADD_SCHEDULE":
+        return { ok: true, schedules: await scheduler.add(message) };
+      case "CANCEL_SCHEDULE":
+        return { ok: true, schedules: await scheduler.cancel(message.id) };
+      case "REMOVE_SCHEDULE":
+        return { ok: true, schedules: await scheduler.remove(message.id) };
       case "GET_STATE":
         return { ok: true, state, settings, credentials: await credentials.status() };
       case "CHECK_BRIDGE":
@@ -38709,7 +39055,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
       case "SAVE_SETTINGS": {
         const next = normalizeSettings(message.settings);
-        if (state.running || startInProgress) await pause("Settings changed. Press Start to apply them.");
+        if (state.running || startInProgress || scheduler.starting) await pause("Settings changed. Press Start to apply them.");
         settings = next;
         state.mode = settings.mode;
         await chrome.storage.local.set({ settings });
@@ -38717,6 +39063,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         return { ok: true, state, settings };
       }
       case "START":
+        if (scheduler.starting) throw new Error("A scheduled session is starting. Cancel it first.");
         await start(message.tabId);
         break;
       case "PAUSE":
@@ -38746,8 +39093,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     void handle(message, sender).then(reply).catch((error62) => reply({ ok: false, error: error62 instanceof Error ? error62.message : "Extension request failed." }));
     return true;
   });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name.startsWith(SCHEDULE_ALARM_PREFIX)) void initialized.then(() => scheduler.tick()).catch(() => void 0);
+  });
+  chrome.runtime.onStartup.addListener(() => {
+    void initialized.then(() => scheduler.tick()).catch(() => void 0);
+  });
   chrome.tabs.onRemoved.addListener((tabId) => {
     void initialized.then(() => {
+      void scheduler.removed(tabId);
       if (state.tabId === tabId && state.running || startingTabId === tabId) return pause("The monitored tab was closed.");
     });
   });
@@ -38758,7 +39112,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   });
   chrome.tabs.onActivated.addListener((info) => {
     void initialized.then(async () => {
-      if (!state.running || settings.backgroundMode || state.tabId === null || info.tabId === state.tabId) return;
+      if (!state.running || backgroundEnabled() || state.tabId === null || info.tabId === state.tabId) return;
       const tab = await chrome.tabs.get(state.tabId).catch(() => null);
       if (!tab || tab.windowId === info.windowId) await pause("The monitored tab became inactive. Return to it and press Start.");
     });

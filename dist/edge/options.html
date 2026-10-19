@@ -9,11 +9,11 @@
   </head>
   <body class="options-body">
     <main class="options-shell">
-      <header class="options-header"><div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">WOOCLAP AUTO</p><h1>Your answer workflow.</h1></div></div><span class="platform-label">Microsoft Edge</span></header>
+      <header class="options-header"><div class="brand"><span class="brand-mark" aria-hidden="true">w<span>·</span></span><div><p class="eyebrow">WOOCLAP AUTO</p><h1>Make it work your way.</h1></div></div><span class="platform-label">Microsoft Edge</span></header>
       <p class="page-intro">Use the shared NVIDIA DeepSeek service when available, or connect your own AI account.</p>
 
-      <form id="settings-form">
-        <section class="settings-card" aria-labelledby="connection-title">
+      <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><p class="eyebrow">WORKSPACE</p><a href="#connection-section">01 &nbsp; Connection</a><a href="#provider-section">02 &nbsp; AI provider</a><a href="#answers-section">03 &nbsp; Answering</a><a href="#advanced-section">04 &nbsp; Advanced</a><a href="#schedule-section">05 &nbsp; Schedule</a><p class="nav-note">Keys stay in this browser session unless you choose to remember them.</p></nav><div class="settings-content"><form id="settings-form">
+        <section id="connection-section" class="settings-card" aria-labelledby="connection-title">
           <div class="section-heading"><span class="section-number">01</span><div><h2 id="connection-title">Choose your connection</h2><p>No local server is needed for automatic or personal API access.</p></div></div>
           <label for="connection-mode">Connection</label><select id="connection-mode" name="connectionMode" aria-describedby="connection-help hosted-fallback-help"><option value="direct">Automatic / own API key</option><option value="demo">Local practice demo</option><option value="bridge">Local bridge (advanced)</option></select>
           <p id="connection-help" class="field-help">Your saved API key takes priority. Without one, the shared NVIDIA service is used when available.</p>
@@ -26,7 +26,7 @@
           <p id="connection-check-help" class="field-help">This checks your saved key or the shared NVIDIA service. Provider access is checked when answering.</p>
         </section>
 
-        <section class="settings-card" aria-labelledby="provider-title">
+        <section id="provider-section" class="settings-card" aria-labelledby="provider-title">
           <div class="section-heading"><span class="section-number">02</span><div><h2 id="provider-title">Choose your AI provider</h2><p>Optionally use your own NVIDIA, OpenAI, or Anthropic API account.</p></div></div>
           <div class="field-grid"><div><label for="provider">AI provider</label><select id="provider" name="provider"><option value="nvidia">NVIDIA (DeepSeek)</option><option value="openai">OpenAI</option><option value="anthropic">Claude (Anthropic)</option></select></div><div><label for="model">Model</label><input id="model" name="model" type="text" value="deepseek-ai/deepseek-v4.1-flash" required maxlength="100" spellcheck="false" autocomplete="off"><p class="field-help">This model is used with your own API key. Shared fallback always uses DeepSeek V4.1 Flash.</p></div></div>
           <div id="credentials-controls" class="credentials-controls">
@@ -34,7 +34,7 @@
             <input id="api-key" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="512" placeholder="Paste your NVIDIA API key" aria-describedby="api-key-help credential-status">
             <p id="api-key-help" class="field-help">The extension sends your key directly to the selected AI provider. Wooclap pages cannot read it. No cookies are used.</p>
             <label class="checkbox-row"><input id="remember-api-key" type="checkbox" aria-describedby="key-storage-help"><span><strong>Remember this key on this device</strong><small>Optional. You will be asked for permission before the key is stored beyond this browser session.</small></span></label>
-            <p id="key-storage-help" class="field-help">By default, keys are removed when Edge exits or the extension is reloaded or disabled. Remembered keys are stored locally without encryption by the extension, until you forget or replace them. Save a replacement with this box unchecked to return to session-only storage.</p>
+            <details class="privacy-details"><summary>How key storage works</summary><p id="key-storage-help" class="field-help">By default, keys are removed when Edge exits or the extension is reloaded or disabled. Remembered keys are stored locally without encryption by the extension, until you forget or replace them. Save a replacement with this box unchecked to return to session-only storage.</p></details>
             <div class="credential-actions"><button id="save-api-key" class="button button-secondary" type="button">Save API key</button><button id="forget-api-key" class="button button-quiet" type="button" disabled>Forget key</button></div>
             <p id="credential-status" class="connection-status" role="status">Reading key status…</p>
             <p id="credential-action-status" class="field-help" role="status"></p>
@@ -42,7 +42,7 @@
           </div>
         </section>
 
-        <section class="settings-card" aria-labelledby="answers-title">
+        <section id="answers-section" class="settings-card" aria-labelledby="answers-title">
           <div class="section-heading"><span class="section-number">03</span><div><h2 id="answers-title">Set your answering style</h2><p>Start with suggestions to check the results yourself.</p></div></div>
           <fieldset class="mode-fieldset"><legend>Answer mode</legend><div class="mode-grid"><label class="mode-option"><input id="mode-suggest" name="mode" type="radio" value="suggest" checked><span><strong>Suggest answers</strong><small>Review each answer, then approve it.</small></span></label><label class="mode-option"><input id="mode-auto" name="mode" type="radio" value="auto"><span><strong>Submit automatically</strong><small>Send valid answers while the session runs.</small></span></label></div></fieldset>
           <label for="request-limit">Requests per session</label><input id="request-limit" name="requestLimit" type="number" min="1" max="100" step="1" value="25" required><p class="field-help">The session pauses when it reaches this limit.</p>
@@ -51,11 +51,34 @@
           <p id="background-help" class="field-help">Uses Edge's debugger connection to capture only the monitored tab. Edge shows a debugging banner while the session runs. Close DevTools for that tab and keep Edge running.</p>
         </section>
 
-        <details class="settings-card advanced-card"><summary><span><strong>Advanced page selectors</strong><small>For a Wooclap layout that needs manual configuration.</small></span><span class="details-arrow" aria-hidden="true">⌄</span></summary><div class="advanced-content"><p class="field-help">Leave these empty to use automatic detection. The local practice page has built-in support. Set selectors only after checking the page structure; matching the wrong controls can select the wrong answer.</p><label for="selector-question">Question container</label><input id="selector-question" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-choices">Answer choices</label><input id="selector-choices" type="text" placeholder="CSS selector matching each choice" autocomplete="off" spellcheck="false"><label for="selector-submit">Submit button</label><input id="selector-submit" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-confirmation">Submission confirmation</label><input id="selector-confirmation" type="text" placeholder="CSS selector visible after submission" autocomplete="off" spellcheck="false"><label class="checkbox-row"><input id="selector-multiple" type="checkbox"><span><strong>These questions allow multiple answers</strong><small>Use this only when the configured layout supports multiple selections.</small></span></label><label class="checkbox-row"><input id="selector-choice-submits" type="checkbox"><span><strong>Clicking a choice immediately submits the answer</strong><small>Enable only for single-answer layouts that submit without a separate button.</small></span></label></div></details>
+        <details id="advanced-section" class="settings-card advanced-card"><summary><span><strong>Advanced page selectors</strong><small>For a Wooclap layout that needs manual configuration.</small></span><span class="details-arrow" aria-hidden="true">⌄</span></summary><div class="advanced-content"><p class="field-help">Leave these empty to use automatic detection. The local practice page has built-in support. Set selectors only after checking the page structure; matching the wrong controls can select the wrong answer.</p><label for="selector-question">Question container</label><input id="selector-question" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-choices">Answer choices</label><input id="selector-choices" type="text" placeholder="CSS selector matching each choice" autocomplete="off" spellcheck="false"><label for="selector-submit">Submit button</label><input id="selector-submit" type="text" placeholder="CSS selector" autocomplete="off" spellcheck="false"><label for="selector-confirmation">Submission confirmation</label><input id="selector-confirmation" type="text" placeholder="CSS selector visible after submission" autocomplete="off" spellcheck="false"><label class="checkbox-row"><input id="selector-multiple" type="checkbox"><span><strong>These questions allow multiple answers</strong><small>Use this only when the configured layout supports multiple selections.</small></span></label><label class="checkbox-row"><input id="selector-choice-submits" type="checkbox"><span><strong>Clicking a choice immediately submits the answer</strong><small>Enable only for single-answer layouts that submit without a separate button.</small></span></label></div></details>
 
         <div class="save-row"><p id="save-status" role="status" class="save-status">Settings are stored in this browser.</p><button id="save-settings" class="button button-primary" type="submit">Save settings <span aria-hidden="true">→</span></button></div>
         <p id="error-message" class="notice notice-error" role="alert" hidden></p>
       </form>
+
+      <section id="schedule-section" class="settings-card schedule-card" aria-labelledby="schedule-title">
+        <div class="section-heading"><span class="section-number">05</span><div><h2 id="schedule-title">Schedule a session</h2><p>Open an event when it starts, then close its tab when time is up.</p></div></div>
+        <div class="schedule-notice"><strong>Ready when Edge is running</strong><p>Keep Edge running and your computer awake. A scheduled session uses your saved connection, provider, and request limit at its start, and enables background mode for that session. Unsaved settings above are not used.</p></div>
+        <form id="schedule-form">
+          <label for="schedule-url">Wooclap participant link</label>
+          <input id="schedule-url" type="url" required maxlength="2048" placeholder="https://www.wooclap.com/YOURCODE" autocomplete="url" spellcheck="false" aria-describedby="schedule-url-help">
+          <p id="schedule-url-help" class="field-help">Use the HTTPS participant link. You may still need to sign in or enter your name in the event tab.</p>
+          <div class="field-grid schedule-fields"><div><label for="schedule-start">Start date and time</label><input id="schedule-start" type="datetime-local" required step="60" aria-describedby="schedule-timezone"></div><div><label for="schedule-duration">Duration in minutes</label><input id="schedule-duration" type="number" required min="1" max="480" step="1" value="60"><p class="field-help">Between 1 minute and 8 hours.</p></div></div>
+          <p id="schedule-timezone" class="field-help">Times use this browser's local time zone.</p>
+          <label for="schedule-mode">Answering for this session</label>
+          <select id="schedule-mode" aria-describedby="schedule-mode-help"><option value="suggest">Suggest answers for review</option><option value="auto">Submit answers automatically</option></select>
+          <p id="schedule-mode-help" class="field-help">Suggestions wait for your approval in the extension. Choose automatic submission to answer while you are away.</p>
+          <p id="schedule-window-preview" class="schedule-window-preview" aria-live="polite"></p>
+          <details class="privacy-details schedule-details"><summary>Timing, background access, and API keys</summary><p class="field-help">Edge may deliver a scheduled start late. If the event's time window is still open, the session can start and will end at the original deadline. Expired sessions are skipped. Only the tab created for the scheduled session is closed. If you navigate that tab away from its event, it is left open.</p><p class="field-help">Schedules cannot overlap. A scheduled session will not interrupt another session already running when its start time arrives.</p><p class="field-help">Background mode uses Edge's debugger connection and may show a debugging banner. Keep DevTools closed for the event tab. Session-only API keys are lost when Edge exits; add your key again before the start, or choose to remember it with your permission.</p><p class="field-help">Schedules are stored on this device, independently of Save settings. Check that your connection works before scheduling a real event.</p></details>
+          <div class="schedule-actions"><button id="add-schedule" class="button button-primary" type="submit">Schedule session <span aria-hidden="true">+</span></button><p id="schedule-action-status" class="connection-status" role="status"></p></div>
+        </form>
+        <div class="schedule-list-heading"><h3>Scheduled sessions</h3><button id="refresh-schedules" class="text-button" type="button">Refresh</button></div>
+        <p id="schedule-load-status" class="field-help" role="status">Loading schedules...</p>
+        <p id="schedule-empty" class="schedule-empty" hidden>No sessions scheduled yet. Add an event above to get started.</p>
+        <ul id="schedule-list" class="schedule-list" aria-label="Scheduled sessions"></ul>
+      </section>
+      </div></div>
       <footer class="options-footer"><span>Wooclap Auto · Microsoft Edge</span><a id="practice-link" href="practice.html" target="_blank" rel="noreferrer">Open practice page ↗</a></footer>
     </main>
   </body>

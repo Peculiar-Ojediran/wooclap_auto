@@ -15,12 +15,18 @@ function event() {
 }
 
 async function harness(options: { settings?: Partial<Settings>; health?: object; onStop?: () => Promise<void> } = {}) {
-  const onMessage = event(), onUpdated = event(), onDetach = event();
+  const onMessage = event(), onUpdated = event(), onDetach = event(), onAlarm = event(), onRemoved = event();
   const sent: string[] = [];
+  const messages: { tabId: number; message: any }[] = [];
+  const created: number[] = [], removed: number[] = [];
+  let now = Date.now();
+  class Clock extends Date { static now() { return now; } }
   const stored: Record<string, any> = {};
   const initial = { ...DEFAULT_SETTINGS, provider: 'openai', model: 'gpt-4.1-mini', connectionMode: 'bridge', backgroundMode: true, bridgeToken: 'synthetic-test-token', ...options.settings };
   const local: Record<string, any> = { settings: initial };
-  const tab = { id: 7, windowId: 1, url: 'http://127.0.0.1:4318/practice', active: true, autoDiscardable: true };
+  const tab = { id: 7, windowId: 1, url: 'http://127.0.0.1:4318/practice', active: true, autoDiscardable: true, status: 'complete' };
+  const tabs = new Map<number, typeof tab>([[tab.id, tab]]);
+  let nextTabId = 8, createGate: Promise<void> | undefined;
   let attached = false, healthCalls = 0, releaseHealth: (() => void) | undefined;
   let holdHealth = false;
   const storage = (data: Record<string, any>) => ({
@@ -30,22 +36,39 @@ async function harness(options: { settings?: Partial<Settings>; health?: object;
     remove: async (key: string) => { delete data[key]; }
   });
   const mock = {
-    runtime: { id: 'fixture', getURL: (path: string) => `chrome-extension://fixture/${path}`, onMessage },
+    runtime: { id: 'fixture', getURL: (path: string) => `chrome-extension://fixture/${path}`, onMessage, onStartup: event() },
+    alarms: { onAlarm, create: async () => {}, clear: async () => true },
     storage: { local: storage(local), session: storage(stored) },
     permissions: { contains: async () => true },
     action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
-    tabs: { get: async () => ({ ...tab }), update: async (_: number, changes: object) => Object.assign(tab, changes),
-      sendMessage: async (_: number, message: { type: string }) => {
+    tabs: { get: async (id: number) => {
+        const current = tabs.get(id);
+        if (!current) throw new Error('No tab with this ID.');
+        return { ...current };
+      }, update: async (id: number, changes: object) => {
+        const current = tabs.get(id);
+        if (!current) throw new Error('No tab with this ID.');
+        return Object.assign(current, changes);
+      }, create: async (properties: { url: string; active: boolean }) => {
+        const id = nextTabId++;
+        created.push(id);
+        await createGate;
+        const current = { ...tab, id, ...properties };
+        tabs.set(id, current);
+        return { ...current };
+      }, remove: async (id: number) => { removed.push(id); tabs.delete(id); onRemoved.emit(id); },
+      sendMessage: async (tabId: number, message: { type: string }) => {
         sent.push(message.type);
+        messages.push({ tabId, message: structuredClone(message) });
         if (message.type === 'MONITOR_STOP') await options.onStop?.();
         return { ok: true };
       },
-      onUpdated, onRemoved: event(), onActivated: event() },
+      onUpdated, onRemoved, onActivated: event() },
     windows: { get: async () => ({ state: 'normal' }) },
     scripting: { executeScript: async () => {} },
     debugger: { onDetach, attach: async () => { attached = true; }, detach: async () => { attached = false; }, sendCommand: async () => ({}) }
   };
-  const context = createContext({ chrome: mock, URL, structuredClone, crypto: { randomUUID }, AbortController, AbortSignal, setTimeout, clearTimeout,
+  const context = createContext({ chrome: mock, URL, Date: Clock, structuredClone, crypto: { randomUUID }, AbortController, AbortSignal, setTimeout, clearTimeout,
     fetch: async () => {
       healthCalls++;
       if (holdHealth) await new Promise<void>(resolve => { releaseHealth = resolve; });
@@ -57,7 +80,10 @@ async function harness(options: { settings?: Partial<Settings>; health?: object;
   assert.equal((await message({ type: 'GET_STATE' })).ok, true);
   const content = (message: object): Promise<any> => new Promise(resolve => onMessage.emit(message,
     { id: 'fixture', url: tab.url, tab, frameId: 0 }, resolve));
-  return { message, content, local, stored, tab, sent, onUpdated, onDetach, initial, attached: () => attached,
+  return { message, content, local, stored, tab, tabs, sent, messages, created, removed, onUpdated, onDetach, initial, attached: () => attached,
+    now: () => now,
+    alarm: (time: number) => { now = time; onAlarm.emit({ name: 'wooclap-schedule:watchdog' }); },
+    holdCreate: (gate: Promise<void>) => { createGate = gate; },
     hold: () => { holdHealth = true; }, release: () => releaseHealth!(),
     waitHealth: async () => { for (let i = 0; i < 20 && !healthCalls; i++) await flush(); assert.equal(healthCalls, 1); } };
 }
@@ -170,4 +196,108 @@ test('browser debugger cancellation immediately pauses the monitored session and
   await h.message({ type: 'PAUSE' });
   assert.equal(h.tab.autoDiscardable, true);
   assert.ok(h.sent.includes('MONITOR_STOP'));
+});
+
+async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    if (await check()) return;
+    await flush();
+  }
+  assert.fail('The expected background transition did not finish.');
+}
+
+async function schedule(h: Awaited<ReturnType<typeof harness>>) {
+  const response = await h.message({ type: 'ADD_SCHEDULE', url: 'https://app.wooclap.com/ABCDEF',
+    startsAt: h.now() + 60_000, durationMinutes: 30, mode: 'auto' });
+  assert.equal(response.ok, true, response.error);
+  return response.schedules[0];
+}
+
+test('scheduled sessions override mode and background behavior without mutating saved settings, then close only their tab', async () => {
+  const h = await harness({ settings: { backgroundMode: false, mode: 'suggest' },
+    health: { ready: true, demo: false, protocolVersion: 2 } });
+  const job = await schedule(h);
+  h.alarm(job.startsAt);
+  await waitFor(async () => (await h.message({ type: 'GET_SCHEDULES' })).schedules[0].status !== 'starting'
+    && h.created.length === 1);
+  const scheduled = (await h.message({ type: 'GET_SCHEDULES' })).schedules[0];
+  assert.equal(scheduled.status, 'running', scheduled.detail);
+  const current = await h.message({ type: 'GET_STATE' });
+  assert.equal(current.state.running, true);
+  assert.equal(current.state.mode, 'auto');
+  assert.equal(current.state.backgroundMode, true);
+  assert.equal(current.state.scheduleId, job.id);
+  assert.equal(current.state.endsAt, job.endsAt);
+  assert.equal(current.settings.mode, 'suggest');
+  assert.equal(current.settings.backgroundMode, false);
+  assert.equal(h.local.settings.mode, 'suggest');
+  assert.equal(h.local.settings.backgroundMode, false);
+  const monitor = h.messages.find(entry => entry.message.type === 'MONITOR_START');
+  assert.equal(monitor?.tabId, 8);
+  assert.equal(monitor?.message.backgroundMode, true);
+  assert.equal(monitor?.message.endsAt, job.endsAt);
+  assert.equal(h.tabs.get(8)?.active, false);
+  assert.equal(h.attached(), true);
+
+  h.alarm(job.endsAt);
+  await waitFor(() => h.removed.includes(8));
+  assert.equal((await h.message({ type: 'GET_STATE' })).state.running, false);
+  assert.equal((await h.message({ type: 'GET_SCHEDULES' })).schedules[0].status, 'completed');
+  assert.equal(h.attached(), false);
+  assert.ok(h.tabs.has(7));
+  assert.deepEqual(h.removed, [8]);
+});
+
+for (const action of ['pause', 'settings', 'credentials']) {
+  test(`${action} during scheduled tab creation prevents a later automatic start`, async () => {
+    const h = await harness({ health: { ready: true, demo: false, protocolVersion: 2 } });
+    let release!: () => void;
+    h.holdCreate(new Promise<void>(resolve => { release = resolve; }));
+    const job = await schedule(h);
+    h.alarm(job.startsAt);
+    await waitFor(() => h.created.length === 1);
+    if (action === 'pause') await h.message({ type: 'PAUSE' });
+    else if (action === 'settings') await h.message({ type: 'SAVE_SETTINGS', settings: { ...h.initial, mode: 'auto' } });
+    else await h.message({ type: 'CLEAR_API_KEY', provider: 'openai' });
+    release();
+    await waitFor(async () => (await h.message({ type: 'GET_SCHEDULES' })).schedules[0].status === 'failed');
+    assert.equal(h.sent.includes('MONITOR_START'), false);
+    assert.equal(h.attached(), false);
+    assert.equal((await h.message({ type: 'GET_STATE' })).state.running, false);
+    assert.equal((await h.message({ type: 'CANCEL_SCHEDULE', id: job.id })).ok, true);
+    assert.deepEqual(h.removed, [8]);
+    assert.ok(h.tabs.has(7));
+  });
+}
+
+test('pausing an active schedule updates its status and alarms never resume it', async () => {
+  const h = await harness({ health: { ready: true, demo: false, protocolVersion: 2 } });
+  const job = await schedule(h);
+  h.alarm(job.startsAt);
+  await waitFor(async () => (await h.message({ type: 'GET_SCHEDULES' })).schedules[0].status === 'running');
+  await h.message({ type: 'PAUSE' });
+  assert.equal((await h.message({ type: 'GET_SCHEDULES' })).schedules[0].status, 'failed');
+  h.alarm(job.startsAt + 60_000);
+  for (let i = 0; i < 8; i++) await flush();
+  assert.equal(h.sent.filter(type => type === 'MONITOR_START').length, 1);
+  assert.equal((await h.message({ type: 'GET_STATE' })).state.running, false);
+  assert.ok(h.tabs.has(8));
+  h.alarm(job.endsAt);
+  await waitFor(() => h.removed.includes(8));
+});
+
+test('participant content cannot inspect, create, or cancel schedules', async () => {
+  const h = await harness();
+  const job = await schedule(h);
+  for (const request of [{ type: 'GET_SCHEDULES' }, { type: 'CANCEL_SCHEDULE', id: job.id }, { type: 'REMOVE_SCHEDULE', id: job.id },
+    { type: 'ADD_SCHEDULE', url: 'https://app.wooclap.com/ABCDEF', startsAt: job.endsAt + 60_000,
+      durationMinutes: 10, mode: 'auto' }]) {
+    const reply = await h.content(request);
+    assert.equal(reply.ok, false);
+    assert.equal(reply.schedules, undefined);
+  }
+  const remaining = (await h.message({ type: 'GET_SCHEDULES' })).schedules;
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].status, 'pending');
+  assert.equal(h.created.length, 0);
 });

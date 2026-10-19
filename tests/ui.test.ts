@@ -4,6 +4,7 @@ import test from 'node:test';
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS, INITIAL_SESSION, PROVIDER_MODELS, type Provider, type SessionState, type Settings } from '../src/shared/types';
+import type { ScheduledSession } from '../src/shared/schedules';
 
 type Message = { type: string; [key: string]: unknown };
 const bundles = new Map<string, Promise<string>>();
@@ -571,5 +572,254 @@ test('popup attributes shared responses to NVIDIA and preserves their transport 
     assert.equal(ui.element('connection-label').textContent, 'Automatic / own API key');
     assert.match(ui.element('response-source').textContent!, /NVIDIA.*shared service/);
     assert.match(ui.element('bridge-mode').textContent!, /NVIDIA.*shared service/);
+  } finally { ui.dom.window.close(); }
+});
+
+test('schedules use a separate form, local start time, explicit answer mode, and preserve unsaved inputs on polls', async () => {
+  const messages: Message[] = [];
+  let schedules: ScheduledSession[] = [];
+  const ui = await loadUI('options', async message => {
+    messages.push(message);
+    if (message.type === 'ADD_SCHEDULE') {
+      schedules = [{ id: 'scheduled', url: message.url as string, startsAt: message.startsAt as number,
+        endsAt: Number(message.startsAt) + Number(message.durationMinutes) * 60_000,
+        mode: message.mode as 'auto', status: 'pending', detail: 'Scheduled.' }];
+    }
+    return { ok: true, settings: DEFAULT_SETTINGS, schedules };
+  });
+  try {
+    assert.equal(ui.element<HTMLSelectElement>('schedule-mode').value, 'suggest');
+    assert.equal(ui.element<HTMLFormElement>('settings-form').contains(ui.element('schedule-url')), false);
+    assert.equal(ui.element<HTMLInputElement>('schedule-url').value, '');
+    ui.element<HTMLButtonElement>('save-settings').click();
+    await flush();
+    assert.equal(messages.filter(message => message.type === 'SAVE_SETTINGS').length, 1, 'Empty scheduling fields must not block saving settings.');
+
+    ui.element<HTMLInputElement>('schedule-url').value = 'https://www.wooclap.com/ABC123';
+    ui.element<HTMLInputElement>('schedule-duration').value = '90';
+    ui.element<HTMLSelectElement>('schedule-mode').value = 'auto';
+    const localStart = ui.element<HTMLInputElement>('schedule-start').value;
+    ui.element<HTMLButtonElement>('add-schedule').click();
+    await flush();
+    const added = messages.find(message => message.type === 'ADD_SCHEDULE')!;
+    assert.equal(added.url, 'https://www.wooclap.com/ABC123');
+    assert.equal(added.startsAt, new Date(localStart).getTime());
+    assert.equal(added.durationMinutes, 90);
+    assert.equal(added.mode, 'auto');
+    assert.equal(messages.filter(message => message.type === 'SAVE_SETTINGS').length, 1, 'Scheduling must not save unrelated settings.');
+    assert.equal(ui.element('schedule-list').children.length, 1);
+
+    ui.element<HTMLInputElement>('schedule-url').value = 'https://www.wooclap.com/NEXT12';
+    ui.element<HTMLInputElement>('model').value = 'unsaved-model';
+    const cancel = ui.element('schedule-list').querySelector<HTMLButtonElement>('.schedule-cancel')!;
+    cancel.focus();
+    ui.poll();
+    await flush();
+    assert.equal(ui.element<HTMLInputElement>('schedule-url').value, 'https://www.wooclap.com/NEXT12');
+    assert.equal(ui.element<HTMLInputElement>('model').value, 'unsaved-model');
+    assert.equal(ui.dom.window.document.activeElement, cancel, 'An unchanged poll must preserve keyboard focus.');
+  } finally { ui.dom.window.close(); }
+});
+
+test('scheduling rejects unsafe URLs and invalid time windows and reports backend rejection without claiming success', async () => {
+  const messages: Message[] = [];
+  const ui = await loadUI('options', async message => {
+    messages.push(message);
+    return message.type === 'ADD_SCHEDULE' ? { ok: false, error: 'This session overlaps another schedule.' }
+      : { ok: true, settings: DEFAULT_SETTINGS, schedules: [] };
+  });
+  try {
+    const url = ui.element<HTMLInputElement>('schedule-url');
+    const start = ui.element<HTMLInputElement>('schedule-start');
+    const duration = ui.element<HTMLInputElement>('schedule-duration');
+    const originalStart = start.value;
+    for (const value of ['https://wooclap.com.attacker.test/ABC123', 'http://www.wooclap.com/ABC123', 'https://name:secret@www.wooclap.com/ABC123', 'https://www.wooclap.com:8443/ABC123']) {
+      url.value = value;
+      ui.element<HTMLButtonElement>('add-schedule').click();
+      await flush();
+      assert.equal(ui.element('schedule-action-status').dataset.state, 'error');
+    }
+    url.value = 'https://www.wooclap.com/ABC123';
+    start.value = '2001-01-01T12:00';
+    ui.element<HTMLButtonElement>('add-schedule').click();
+    await flush();
+    assert.match(ui.element('schedule-action-status').textContent!, /future date/);
+    start.value = originalStart;
+    for (const value of ['0', '481', '1.5']) {
+      duration.value = value;
+      ui.element<HTMLButtonElement>('add-schedule').click();
+      await flush();
+    }
+    assert.equal(messages.some(message => message.type === 'ADD_SCHEDULE'), false);
+    duration.value = '60';
+    ui.element<HTMLButtonElement>('add-schedule').click();
+    await flush();
+    assert.equal(ui.element('schedule-action-status').textContent, 'This session overlaps another schedule.');
+    assert.equal(ui.element('schedule-action-status').dataset.state, 'error');
+    assert.equal(ui.element('schedule-list').children.length, 0);
+    assert.equal(ui.element('error-message').hidden, true, 'Scheduling errors stay separate from settings errors.');
+  } finally { ui.dom.window.close(); }
+});
+
+test('schedule cancellation can close a failed session tab and ignores an older poll result', async () => {
+  let schedules: ScheduledSession[] = [{ id: 'owned', url: 'https://www.wooclap.com/ABC123',
+    startsAt: Date.now(), endsAt: Date.now() + 60_000, mode: 'auto', status: 'failed', hasTab: true,
+    detail: '<img src=x onerror=alert(1)> The connection stopped.' }];
+  let reads = 0;
+  let completePoll: (value: object) => void = () => { throw new Error('No poll was started.'); };
+  let cancelledId: unknown;
+  const ui = await loadUI('options', async message => {
+    if (message.type === 'GET_SCHEDULES' && ++reads > 1) return new Promise(resolve => { completePoll = resolve; });
+    if (message.type === 'CANCEL_SCHEDULE') {
+      cancelledId = message.id;
+      schedules = schedules.map(schedule => ({ ...schedule, status: 'cancelled', hasTab: false, detail: 'Cancelled. Event tab closed.' }));
+    }
+    return { ok: true, settings: DEFAULT_SETTINGS, schedules };
+  });
+  try {
+    assert.equal(ui.element('schedule-list').querySelector('img'), null, 'Schedule details must remain text.');
+    const button = ui.element('schedule-list').querySelector<HTMLButtonElement>('.schedule-cancel')!;
+    assert.equal(button.textContent, 'Stop & close tab');
+    const stale = structuredClone(schedules);
+    ui.poll();
+    await flush();
+    button.click();
+    await flush();
+    assert.equal(cancelledId, 'owned');
+    assert.equal(ui.element('schedule-list').querySelector('.schedule-cancel'), null);
+    assert.match(ui.element('schedule-list').textContent!, /Cancelled/);
+    completePoll({ ok: true, schedules: stale });
+    await flush();
+    assert.equal(ui.element('schedule-list').querySelector('.schedule-cancel'), null);
+    assert.match(ui.element('schedule-list').textContent!, /Cancelled/);
+  } finally { ui.dom.window.close(); }
+});
+
+test('every schedule can be removed, with explicit stop labels when monitoring or tab cleanup is needed', async () => {
+  const variants: Array<Pick<ScheduledSession, 'status' | 'hasTab'>> = [
+    { status: 'pending' }, { status: 'completed' }, { status: 'cancelled' },
+    { status: 'missed' }, { status: 'failed' }, { status: 'starting' },
+    { status: 'running' }, { status: 'failed', hasTab: true }
+  ];
+  let schedules: ScheduledSession[] = variants.map((variant, index) => ({
+    id: `session-${index}`, url: `https://www.wooclap.com/EVENT${index}`,
+    startsAt: Date.now() + 60_000, endsAt: Date.now() + 120_000,
+    mode: 'auto', detail: 'Session detail.', ...variant
+  }));
+  const original = structuredClone(schedules);
+  const removed: unknown[] = [];
+  const ui = await loadUI('options', async message => {
+    if (message.type === 'REMOVE_SCHEDULE') {
+      removed.push(message.id);
+      schedules = schedules.filter(schedule => schedule.id !== message.id);
+    }
+    assert.notEqual(message.type, 'CANCEL_SCHEDULE', 'Removing sends a single removal command.');
+    return { ok: true, settings: DEFAULT_SETTINGS, schedules };
+  });
+  try {
+    ui.element<HTMLInputElement>('schedule-url').value = 'https://www.wooclap.com/UNSAVED';
+    ui.element<HTMLInputElement>('model').value = 'unsaved-model';
+    for (const schedule of original) {
+      const item = ui.element('schedule-list').firstElementChild!;
+      const button = item.querySelector<HTMLButtonElement>('.schedule-remove')!;
+      const active = schedule.hasTab || schedule.status === 'starting' || schedule.status === 'running';
+      assert.equal(button.textContent, active ? 'Stop & remove' : 'Remove');
+      assert.equal(button.getAttribute('aria-label'), `${button.textContent}: ${schedule.url}`);
+      assert.match(button.title, active ? /close only its created event tab/ : /schedule and history/);
+      button.click();
+      await flush();
+      assert.equal(removed.at(-1), schedule.id);
+      assert.equal(ui.element('schedule-list').children.length, schedules.length);
+    }
+    assert.equal(removed.length, original.length);
+    assert.equal(ui.element('schedule-empty').hidden, false);
+    assert.equal(ui.element('schedule-action-status').dataset.state, 'success');
+    assert.match(ui.element('schedule-action-status').textContent!, /removed from the schedule and history/);
+    assert.equal(ui.element<HTMLInputElement>('schedule-url').value, 'https://www.wooclap.com/UNSAVED');
+    assert.equal(ui.element<HTMLInputElement>('model').value, 'unsaved-model');
+  } finally { ui.dom.window.close(); }
+});
+
+test('schedule removal waits for cleanup and a delayed poll cannot restore the removed entry', async () => {
+  const schedules: ScheduledSession[] = [{ id: 'starting', url: 'https://www.wooclap.com/ABC123',
+    startsAt: Date.now(), endsAt: Date.now() + 60_000, mode: 'auto', status: 'starting', detail: 'Opening event tab.' }];
+  let reads = 0;
+  let removals = 0;
+  let completePoll: (value: object) => void = () => { throw new Error('No poll was started.'); };
+  let completeRemoval: (value: object) => void = () => { throw new Error('No removal was started.'); };
+  const ui = await loadUI('options', async message => {
+    if (message.type === 'GET_SCHEDULES' && ++reads > 1) return new Promise(resolve => { completePoll = resolve; });
+    if (message.type === 'REMOVE_SCHEDULE') {
+      removals++;
+      return new Promise(resolve => { completeRemoval = resolve; });
+    }
+    return { ok: true, settings: DEFAULT_SETTINGS, schedules };
+  });
+  try {
+    ui.poll();
+    await flush();
+    const button = ui.element('schedule-list').querySelector<HTMLButtonElement>('.schedule-remove')!;
+    button.click();
+    await flush();
+    assert.equal(button.disabled, true);
+    assert.equal(ui.element<HTMLButtonElement>('add-schedule').disabled, true);
+    assert.equal(ui.element('schedule-list').children.length, 1, 'Keep the entry visible until cleanup succeeds.');
+    button.click();
+    assert.equal(removals, 1, 'A pending cleanup must not receive duplicate removals.');
+    completeRemoval({ ok: true, schedules: [] });
+    await flush();
+    assert.equal(ui.element('schedule-list').children.length, 0);
+    completePoll({ ok: true, schedules });
+    await flush();
+    assert.equal(ui.element('schedule-list').children.length, 0);
+    assert.equal(ui.element('schedule-empty').hidden, false);
+    assert.equal(ui.element<HTMLButtonElement>('add-schedule').disabled, false);
+  } finally { ui.dom.window.close(); }
+});
+
+test('a rejected removal preserves its entry and allows a cleanup retry', async () => {
+  const schedules: ScheduledSession[] = [{ id: 'owned', url: 'https://www.wooclap.com/ABC123',
+    startsAt: Date.now(), endsAt: Date.now() + 60_000, mode: 'auto', status: 'cancelled',
+    hasTab: true, detail: 'The event tab could not be closed.' }];
+  let removals = 0;
+  const ui = await loadUI('options', async message => {
+    if (message.type === 'REMOVE_SCHEDULE') {
+      if (++removals === 1) return { ok: false, error: 'Could not close the event tab. Try removing this session again.' };
+      return { ok: true, schedules: [] };
+    }
+    return { ok: true, settings: DEFAULT_SETTINGS, schedules };
+  });
+  try {
+    const button = ui.element('schedule-list').querySelector<HTMLButtonElement>('.schedule-remove')!;
+    button.click();
+    await flush();
+    assert.equal(ui.element('schedule-list').children.length, 1);
+    assert.equal(button.disabled, false);
+    assert.equal(ui.element('schedule-action-status').dataset.state, 'error');
+    assert.match(ui.element('schedule-action-status').textContent!, /Could not close the event tab/);
+    assert.equal(ui.element('error-message').hidden, true);
+    button.click();
+    await flush();
+    assert.equal(removals, 2);
+    assert.equal(ui.element('schedule-list').children.length, 0);
+    assert.equal(ui.element('schedule-action-status').dataset.state, 'success');
+  } finally { ui.dom.window.close(); }
+});
+
+test('unavailable scheduler leaves settings usable and exposes a separate refresh status', async () => {
+  let saves = 0;
+  const ui = await loadUI('options', async message => {
+    if (message.type === 'GET_SCHEDULES') return { ok: false, error: 'Schedule storage unavailable.' };
+    if (message.type === 'SAVE_SETTINGS') saves++;
+    return { ok: true, settings: DEFAULT_SETTINGS };
+  });
+  try {
+    assert.equal(ui.element('schedule-load-status').textContent, 'Schedule storage unavailable.');
+    assert.equal(ui.element<HTMLButtonElement>('add-schedule').disabled, true);
+    assert.equal(ui.element('error-message').hidden, true);
+    ui.element<HTMLButtonElement>('save-settings').click();
+    await flush();
+    assert.equal(saves, 1);
+    assert.equal(ui.element('save-status').dataset.state, 'success');
   } finally { ui.dom.window.close(); }
 });

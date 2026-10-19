@@ -48,9 +48,24 @@ function render(state: SessionState, settings: Settings): void {
   phase.textContent = phaseLabels[state.phase] ?? state.phase;
   phase.dataset.phase = state.phase;
   const answerMode = (state.running ? state.mode : settings.mode) === 'auto' ? 'Auto-submit mode' : 'Suggestion mode';
-  element('mode').textContent = `${answerMode}${settings.backgroundMode ? ' · Background' : ''}`;
+  element('mode').textContent = `${answerMode}${(state.running ? state.backgroundMode ?? settings.backgroundMode : settings.backgroundMode) ? ' \u00b7 Background' : ''}`;
   element('session-detail').textContent = state.detail;
   element('request-count').textContent = `${state.requestCount} / ${settings.requestLimit} requests`;
+  const progress = element<HTMLProgressElement>('request-progress');
+  progress.max = settings.requestLimit;
+  progress.value = state.requestCount;
+  progress.setAttribute('aria-valuetext', state.requestCount + ' of ' + settings.requestLimit + ' requests used');
+  const emptyCopy: Partial<Record<SessionState['phase'], [string, string]>> = {
+    waiting: ['Watching your question tab', 'A new question will appear here when it is detected.'],
+    solving: ['Preparing your answer', 'Your AI provider is working on the question.'],
+    paused: ['Take your time', 'To start again, open the question tab and select Start on this tab.'],
+    submitted: ['Answer sent', 'The next detected question will appear here.'],
+    error: ['Something needs attention', 'Check the session message above. Connection and API-key options are in Settings.']
+  };
+  const [title, description] = emptyCopy[state.phase] ??
+    ['Ready when the question is.', 'Open a Wooclap question, then start this tab. Try the practice page to explore first.'];
+  element('empty-title').textContent = title;
+  element('empty-description').textContent = description;
   const bridgeMode = element('bridge-mode');
   bridgeMode.hidden = !state.bridgeMode;
   const sessionConnection = state.connectionMode ?? 'bridge';

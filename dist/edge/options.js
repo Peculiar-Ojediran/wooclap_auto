@@ -19,6 +19,61 @@
   // src/shared/hosted-config.ts
   var HOSTED_FALLBACK_URL = true ? "" : "";
 
+  // src/content/structured.ts
+  var inputSelector = 'input[type="text"], input[type="number"], input:not([type])';
+  var blankSelector = `${inputSelector}, button[role="combobox"][aria-haspopup="listbox"]`;
+
+  // src/content/advanced.ts
+  var ADVANCED_TYPES = ".Rating, .Prioritization, .Brainstorm, .Framework, .LabelAnImage, .ShowOnImage, .DragAndDrop, .Concordance, .SCTJudgment";
+
+  // src/content/wooclap.ts
+  var participantSelector = `.MCQ, .Poll, .Sorting, .GuessNumber, .OpenQuestion, .WordCloud, .FillInTheBlanks, .Matching, ${ADVANCED_TYPES}`;
+  var reservedRoutes = /* @__PURE__ */ new Set([
+    "public",
+    "auth",
+    "login",
+    "signin",
+    "signup",
+    "register",
+    "events",
+    "event",
+    "participant",
+    "features",
+    "pricing",
+    "about",
+    "blog",
+    "logout",
+    "blocked-locked-plan",
+    "trial"
+  ]);
+  function eventKeyForUrl(value) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || !(url.hostname === "wooclap.com" || url.hostname.endsWith(".wooclap.com"))) return null;
+      const match = url.pathname.match(/^\/([a-z\d_-]+)(?:\/(?:questionnaires|presentations)\/[a-z\d_-]+|\/(?:wall|report)(?:\/votes)?)?\/?$/i);
+      if (!match || reservedRoutes.has(match[1].toLowerCase())) return null;
+      return `${url.origin}/event/${match[1].toUpperCase()}`;
+    } catch {
+      return null;
+    }
+  }
+
+  // src/shared/schedules.ts
+  function scheduleUrl(value) {
+    if (typeof value !== "string" || value.length > 2048) throw new Error("Enter a Wooclap participant link.");
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("Enter a full HTTPS Wooclap link.");
+    }
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !(url.hostname === "wooclap.com" || url.hostname.endsWith(".wooclap.com"))) {
+      throw new Error("Use an HTTPS link on wooclap.com without embedded credentials or a custom port.");
+    }
+    if (!eventKeyForUrl(url.href)) throw new Error("Use a Wooclap participant event link, such as https://app.wooclap.com/ABCDEF.");
+    return url.href;
+  }
+
   // src/ui/options.ts
   function element(id) {
     const found = document.getElementById(id);
@@ -240,4 +295,178 @@ The extension will store it locally without encryption, until you forget or repl
     initialized = true;
     acceptCredentials(response);
   }).catch(showError);
+  var scheduleForm = element("schedule-form");
+  var scheduleActionStatus = element("schedule-action-status");
+  var scheduleLoadStatus = element("schedule-load-status");
+  var scheduleList = element("schedule-list");
+  var scheduleStatuses = {
+    pending: "Scheduled",
+    starting: "Starting",
+    running: "Running",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    missed: "Missed",
+    failed: "Needs attention"
+  };
+  var sessionDate = new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "short" });
+  var scheduleBusy = false;
+  var scheduleInitialized = false;
+  var schedulePolling = false;
+  var scheduleSequence = 0;
+  var scheduleListKey = "";
+  function localDateInput(date) {
+    const part = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
+  }
+  function scheduleUrl2(value) {
+    return new URL(scheduleUrl(value.trim()));
+  }
+  function updateScheduleControls() {
+    element("add-schedule").disabled = scheduleBusy || !scheduleInitialized;
+    element("refresh-schedules").disabled = scheduleBusy || schedulePolling;
+    for (const button of scheduleList.querySelectorAll("button")) button.disabled = scheduleBusy;
+  }
+  function updateSchedulePreview() {
+    const startsAt = new Date(input("schedule-start").value).getTime();
+    const duration = Number(input("schedule-duration").value);
+    const preview = element("schedule-window-preview");
+    preview.textContent = Number.isFinite(startsAt) && Number.isInteger(duration) && duration >= 1 && duration <= 480 ? `The event tab closes at ${sessionDate.format(new Date(startsAt + duration * 6e4))}.` : "";
+  }
+  function renderSchedules(schedules) {
+    scheduleInitialized = true;
+    scheduleLoadStatus.textContent = "";
+    const key = JSON.stringify(schedules);
+    if (key !== scheduleListKey) {
+      scheduleListKey = key;
+      const items = schedules.map((schedule) => {
+        const item = document.createElement("li");
+        item.className = "schedule-item";
+        const heading = document.createElement("div");
+        heading.className = "schedule-item-heading";
+        const status = document.createElement("span");
+        status.className = "schedule-status";
+        status.dataset.status = schedule.status;
+        status.textContent = scheduleStatuses[schedule.status] ?? "Unknown";
+        const mode = document.createElement("span");
+        mode.className = "schedule-item-mode";
+        mode.textContent = schedule.mode === "auto" ? "Automatic submission" : "Review suggestions";
+        heading.append(status, mode);
+        const link = document.createElement("a");
+        link.className = "schedule-event-link";
+        link.textContent = schedule.url;
+        try {
+          link.href = scheduleUrl2(schedule.url).href;
+          link.target = "_blank";
+          link.rel = "noreferrer noopener";
+        } catch {
+        }
+        const times = document.createElement("p");
+        times.className = "schedule-item-times";
+        times.textContent = `${sessionDate.format(new Date(schedule.startsAt))} \u2013 ${sessionDate.format(new Date(schedule.endsAt))}`;
+        const detail = document.createElement("p");
+        detail.className = "field-help";
+        detail.textContent = schedule.detail;
+        item.append(heading, link, times, detail);
+        if (schedule.hasTab || schedule.status === "pending" || schedule.status === "starting" || schedule.status === "running") {
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.className = "button button-quiet schedule-cancel";
+          cancel.textContent = schedule.status === "pending" && !schedule.hasTab ? "Cancel schedule" : "Stop & close tab";
+          cancel.setAttribute("aria-label", `${cancel.textContent}: ${schedule.url}`);
+          cancel.addEventListener("click", () => void scheduleAction(async () => {
+            await changeSchedules({ type: "CANCEL_SCHEDULE", id: schedule.id });
+            scheduleActionStatus.textContent = "Schedule cancelled. Its status below shows whether the event tab was closed.";
+          }));
+          item.append(cancel);
+        }
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "button button-quiet schedule-remove";
+        const active = schedule.hasTab || schedule.status === "starting" || schedule.status === "running";
+        remove.textContent = active ? "Stop & remove" : "Remove";
+        remove.title = active ? "Stop this scheduled session, close only its created event tab, and remove it from the list. A tab navigated away from its event is left open." : "Permanently remove this session from the schedule and history.";
+        remove.setAttribute("aria-label", `${remove.textContent}: ${schedule.url}`);
+        remove.addEventListener("click", () => void scheduleAction(async () => {
+          await changeSchedules({ type: "REMOVE_SCHEDULE", id: schedule.id });
+          scheduleActionStatus.textContent = "Session removed from the schedule and history.";
+        }));
+        item.append(remove);
+        return item;
+      });
+      scheduleList.replaceChildren(...items);
+    }
+    element("schedule-empty").hidden = schedules.length !== 0;
+    updateScheduleControls();
+  }
+  async function changeSchedules(message) {
+    const response = await send(message);
+    if (!Array.isArray(response.schedules)) throw new Error("Could not read schedules. Reload the extension and try again.");
+    renderSchedules(response.schedules);
+  }
+  async function refreshSchedules() {
+    if (schedulePolling || scheduleBusy) return;
+    schedulePolling = true;
+    const sequence = ++scheduleSequence;
+    updateScheduleControls();
+    try {
+      const response = await send({ type: "GET_SCHEDULES" });
+      if (sequence !== scheduleSequence) return;
+      if (!Array.isArray(response.schedules)) throw new Error("Schedules are unavailable. Reload the extension and refresh this page.");
+      renderSchedules(response.schedules);
+    } catch (error) {
+      if (sequence === scheduleSequence) {
+        scheduleLoadStatus.textContent = error instanceof Error ? error.message : "Could not refresh schedules.";
+      }
+    } finally {
+      schedulePolling = false;
+      updateScheduleControls();
+    }
+  }
+  async function scheduleAction(callback) {
+    if (scheduleBusy || !scheduleInitialized) return;
+    scheduleBusy = true;
+    ++scheduleSequence;
+    updateScheduleControls();
+    scheduleActionStatus.textContent = "";
+    scheduleActionStatus.removeAttribute("data-state");
+    try {
+      await callback();
+      scheduleActionStatus.dataset.state = "success";
+    } catch (error) {
+      scheduleActionStatus.textContent = error instanceof Error ? error.message : "Could not update the schedule.";
+      scheduleActionStatus.dataset.state = "error";
+    } finally {
+      scheduleBusy = false;
+      updateScheduleControls();
+    }
+  }
+  scheduleForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!scheduleForm.reportValidity()) return;
+    void scheduleAction(async () => {
+      const url = scheduleUrl2(input("schedule-url").value).href;
+      const startValue = input("schedule-start").value;
+      const start = new Date(startValue);
+      const startsAt = start.getTime();
+      if (!Number.isFinite(startsAt) || startsAt <= Date.now() || localDateInput(start) !== startValue) {
+        throw new Error("Choose a future date and a valid local time. Times skipped by daylight saving cannot be scheduled.");
+      }
+      const durationMinutes = Number(input("schedule-duration").value);
+      if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
+        throw new Error("Choose a whole number of minutes between 1 and 480.");
+      }
+      const mode = element("schedule-mode").value === "auto" ? "auto" : "suggest";
+      await changeSchedules({ type: "ADD_SCHEDULE", url, startsAt, durationMinutes, mode });
+      scheduleActionStatus.textContent = "Session scheduled. Keep Edge running and your computer awake.";
+    });
+  });
+  scheduleForm.addEventListener("input", updateSchedulePreview);
+  element("refresh-schedules").addEventListener("click", () => void refreshSchedules());
+  input("schedule-start").value = localDateInput(new Date(Date.now() + 30 * 6e4));
+  element("schedule-timezone").textContent = `All schedule times use this browser's local time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`;
+  updateSchedulePreview();
+  updateScheduleControls();
+  void refreshSchedules();
+  var scheduleTimer = window.setInterval(() => void refreshSchedules(), 5e3);
+  window.addEventListener("pagehide", () => window.clearInterval(scheduleTimer));
 })();
